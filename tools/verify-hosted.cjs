@@ -129,6 +129,22 @@ async function main() {
     await page.screenshot({ path: path.join(output, 'manual-phone.png'), fullPage: true });
     checks.push('手動 70／10／50／20 ㎡、共有含車位＝33.28 坪／27.27%');
 
+    await page.locator('#edit').click();
+    for (const [field, value] of Object.entries({ main: '60', accessory: '5', common: '10000' })) await page.locator(`#field-${field}`).fill(value);
+    await page.locator('#scope').selectOption('whole');
+    await page.locator('#share-numerator').fill('600'); await page.locator('#share-denominator').fill('100000');
+    await page.locator('#parking-scope').selectOption('common');
+    await page.locator('#parking-share-numerator').fill('300'); await page.locator('#parking-share-denominator').fill('100000');
+    assert.equal(await page.locator('#share-confirmed').isChecked(), false);
+    assert.equal(await page.locator('#parking-share-confirmed').isChecked(), false);
+    await page.locator('#share-confirmed').check(); await page.locator('#parking-share-confirmed').check();
+    await page.locator('#confirmed').check(); await page.locator('#calculate').click();
+    assert.equal(await page.locator('[data-result="with"]').textContent(), '37.81 坪');
+    assert.equal(await page.locator('[data-result="without"]').textContent(), '28.74 坪');
+    assert.match(await page.locator('#summary').inputValue(), /車位持分：300／100000/);
+    await page.screenshot({ path: path.join(output, 'ownership-phone.png'), fullPage: true });
+    checks.push('共有及車位持分分別乘共有總面積、獨立確認與摘要追溯');
+
     await backToImport();
     await page.locator('#file-input').setInputFiles({ name: 'synthetic-area.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: fixtures.excel });
     await page.locator('#selection').waitFor({ state: 'visible' });
