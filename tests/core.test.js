@@ -268,3 +268,50 @@ test('rejects invalid relationship enums without deriving totals', () => {
   assert.ok(result.errors.some((error) => error.field === 'commonIncludesParking'));
   assert.equal(result.display.with, '待確認');
 });
+
+test('separate parking share uses the unallocated common area exactly once', () => {
+  const result = calculateAreas(createInput({
+    fields: { main: { value: '60', unit: 'sqm' }, accessory: { value: '5', unit: 'sqm' }, common: { value: '10000', unit: 'sqm' }, parking: { value: 'stale', unit: 'unknown' } },
+    commonScope: 'whole', shareNumerator: '600', shareDenominator: '100000', shareConfirmed: true,
+    parkingScope: 'common', parkingShareNumerator: '300', parkingShareDenominator: '100000', parkingShareConfirmed: true,
+  }));
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.display.common, '18.15 坪');
+  assert.equal(result.display.parking, '9.08 坪');
+  assert.equal(result.display.public, '9.08 坪');
+  assert.equal(result.display.with, '37.81 坪');
+  assert.equal(result.display.without, '28.74 坪');
+  assert.equal(result.display.ratio, '31.58%');
+  assert.equal(result.raw.parkingShare.applied, true);
+  assert.deepEqual(result.raw.values.parking, { numerator: '363', denominator: '40' });
+});
+
+test('parking share requires its own confirmation and never reuses common ownership', () => {
+  const result = calculateAreas(createInput({ commonScope: 'whole', shareNumerator: '1', shareDenominator: '2', shareConfirmed: true, parkingScope: 'common', parkingShareNumerator: '1', parkingShareDenominator: '4' }));
+  assert.equal(result.display.parking, '待確認');
+  assert.equal(result.display.public, '待確認');
+  assert.equal(result.raw.parkingShare.applied, false);
+});
+
+test('parking share refuses a household common base or an invalid scope', () => {
+  const result = calculateAreas(createInput({ parkingScope: 'common', parkingShareNumerator: '1', parkingShareDenominator: '4', parkingShareConfirmed: true }));
+  assert.ok(result.errors.some(error => error.field === 'parkingScope'));
+  assert.equal(result.display.parking, '待確認');
+  const invalid = calculateAreas(createInput({ parkingScope: 'invalid' }));
+  assert.ok(invalid.errors.some(error => error.field === 'parkingScope'));
+  assert.equal(invalid.display.parking, '待確認');
+});
+
+for (const [numerator, denominator] of [['0', '1'], ['1', '0'], ['2', '1'], ['1.2', '3'], ['1', ''], ['1e2', '200']]) {
+  test(`rejects invalid parking ownership ${numerator}/${denominator}`, () => {
+    const result = calculateAreas(createInput({ commonScope: 'whole', parkingScope: 'common', parkingShareNumerator: numerator, parkingShareDenominator: denominator, parkingShareConfirmed: true }));
+    assert.ok(result.errors.some(error => error.field.startsWith('parkingShare')));
+    assert.equal(result.display.parking, '待確認');
+  });
+}
+
+test('parking share larger than allocated common area blocks dependent totals', () => {
+  const result = calculateAreas(createInput({ commonScope: 'whole', shareNumerator: '1', shareDenominator: '4', shareConfirmed: true, parkingScope: 'common', parkingShareNumerator: '1', parkingShareDenominator: '2', parkingShareConfirmed: true }));
+  assert.ok(result.errors.some(error => error.field === 'parking'));
+  assert.equal(result.display.with, '待確認');
+});

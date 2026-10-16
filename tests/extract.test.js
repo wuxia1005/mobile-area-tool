@@ -10,6 +10,12 @@ function suggested(result, field) {
   return result.candidates.find(candidate => candidate.id === result.suggestions[field]);
 }
 
+test('spaced OCR digits and malformed decimals do not yield suffix area candidates', () => {
+  for (const text of ['共有面積 10.304.04平方公尺', '7.3 4平方公尺', '共有面積 7 34平方公尺']) {
+    assert.equal(extract(text).candidates.length, 0);
+  }
+});
+
 test('辨識明確面積並保留來源與原始文字', () => {
   const text = '主建物：100 平方公尺　附屬建物：10㎡　共有部分：20m²　車位面積：8m2';
   const result = extract(text);
