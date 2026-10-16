@@ -1,0 +1,5 @@
+dist/
+.dependency-cache/
+test-results/
+node_modules/
+*.zip

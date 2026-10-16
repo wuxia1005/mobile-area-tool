@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self' blob: data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="theme-color" content="#216244">
+  <meta name="description" content="在手機內讀取房屋面積文件，核對後換算坪數與公設比。文件不會上傳。">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <title>房屋面積小工具</title>
+  <script src="./src/compat.js"></script>
+  <script src="./vendor/xlsx.full.min.js" defer></script>
+  <script src="./vendor/tesseract.min.js" defer></script>
+  <script src="./src/app.js" type="module"></script>
+</head>
+<body>
+  <div class="app">
+    <header><div><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version">第一版</span></header>
+    <ol class="steps" aria-label="操作步驟"><li data-step="import" aria-current="step">① 選擇檔案</li><li data-step="review">② 核對資料</li><li data-step="result">③ 查看結果</li></ol>
+    <main>
+      <section data-screen="import">
+        <h2>從 LINE 收到檔案？</h2><p class="muted">先存到 iPhone 的「檔案」或「照片」，再選取要換算的文件。</p>
+        <div class="imports"><button data-pick="pdf"><span class="file-type">PDF</span><span>選擇 PDF<small>逐頁辨識可見內容，每次最多 5 頁</small></span></button><button data-pick="image"><span class="file-type">圖片</span><span>選擇圖片<small>JPG、PNG、WebP；請保留清晰文字</small></span></button><button data-pick="excel"><span class="file-type">Excel</span><span>選擇 Excel<small>XLSX、XLS；先選工作表</small></span></button></div>
+        <input id="file-input" type="file" hidden>
+        <div class="note">不會讀取 LINE 聊天室，也不會把文件上傳。辨識時請保持此頁開啟，先勿鎖屏。</div>
+        <button class="secondary full" id="manual">不選檔案，直接輸入面積</button>
+        <details class="help"><summary>使用與隱私說明</summary><p>第一次開啟需下載工具與辨識模型；不使用付費 API。文件與結果只保留在本頁記憶體，重新整理或關閉後可能遺失，請先匯出。模糊、遮蔽、缺少面積細項或持分的文件不能保證自動辨識。PDF 不讀取隱藏文字圖層；Excel 略過隱藏工作表、列、欄，不執行巨集或公式。</p><p>Safari「分享 → 加入主畫面」後，可像 App 開啟。此版本未宣稱離線可用。建議使用 iOS 17 以上，仍需在你的 iPhone 驗證。</p></details>
+      </section>
+      <section id="selection" hidden>
+        <h2>選擇要讀取的範圍</h2><p id="selection-name" class="muted"></p>
+        <div id="pdf-choice" hidden><label for="pdf-pages">PDF 頁碼（每次最多 5 頁）</label><input id="pdf-pages" type="text" inputmode="text" placeholder="例如 1 或 1-3,5"><p id="pdf-count" class="hint"></p></div>
+        <div id="sheet-choice" hidden><label for="excel-sheet">工作表</label><select id="excel-sheet"></select></div>
+        <button id="start-read" class="primary full">讀取這個範圍</button><button id="cancel-selection" class="secondary full">取消</button>
+      </section>
+      <section id="processing" hidden aria-live="polite"><h2>正在手機內處理</h2><p id="progress-label"></p><progress id="progress" max="1" value="0"></progress><p class="hint">不會上傳文件。中文與掃描 PDF 可能較慢，請保持畫面開啟。</p><button id="cancel-read" class="secondary full">取消處理</button></section>
+      <section data-screen="review" hidden>
+        <h2>確認這一戶的面積</h2><p id="source-name" class="muted source-name"></p>
+        <div id="read-warnings" class="note" hidden></div>
+        <details id="source-details"><summary>查看來源原圖與讀取文字</summary><div id="source-images"></div><div id="source-records" class="source-records"></div></details>
+        <div id="fields" class="fields"></div>
+        <label for="scope">共有部分的面積範圍</label><select id="scope"><option value="unknown">請核對：本戶／全棟／全層？</option><option value="household">本戶已分攤的面積</option><option value="whole">全棟／全層，需按本戶持分換算</option></select>
+        <div id="share-fields" class="share-fields" hidden><p class="hint">只對共有部分套用一次持分；車位請另填本戶持分面積。</p><div class="two-columns"><label>持分分子<input id="share-numerator" type="text" inputmode="numeric"></label><label>持分分母<input id="share-denominator" type="text" inputmode="numeric"></label></div><label class="check"><input id="share-confirmed" type="checkbox"><span>已確認這組持分適用於上方共有部分</span></label></div>
+        <label for="inclusion">上述共有部分是否已包含車位？</label><select id="inclusion"><option value="unknown">不確定，先不算衍生結果</option><option value="included">已含車位，計算公設時扣除</option><option value="excluded">未含車位，車位另外列計</option></select>
+        <p id="review-feedback" class="feedback" aria-live="polite"></p><p id="review-errors" class="error" role="alert" hidden></p>
+        <label class="check"><input id="confirmed" type="checkbox"><span>已核對數值、單位、來源與車位關係。空白代表資料不足，不當作 0。</span></label>
+        <button id="calculate" class="primary full" disabled>確認並計算</button><button id="back-import" class="secondary full">重新選擇文件</button>
+      </section>
+      <section data-screen="result" hidden>
+        <h2>換算結果</h2><p id="result-status" class="muted"></p><div class="total"><span>總坪數（不含車位）</span><strong data-result="without"></strong></div>
+        <dl class="results"><div><dt>總坪數（含車位）</dt><dd data-result="with"></dd></div><div><dt>公設比（扣車位）</dt><dd data-result="ratio"></dd></div><div><dt>公設坪數（不含車位）</dt><dd data-result="public"></dd></div><div><dt>車位坪數</dt><dd data-result="parking"></dd></div><div><dt>主建物坪數</dt><dd data-result="main"></dd></div><div><dt>附屬建物坪數</dt><dd data-result="accessory"></dd></div></dl>
+        <p id="result-note" class="feedback"></p><label class="check"><input id="include-source" type="checkbox"><span>匯出完整來源與修正紀錄（可能包含姓名、其他戶資料；分享前請確認）</span></label><div class="actions"><button id="copy-summary">複製 LINE 摘要</button><button id="export">匯出 Excel</button></div><button id="share-result" class="secondary full">分享結果檔案</button><p id="action-status" class="feedback" role="status"></p><label for="summary">文字摘要（可長按複製）</label><textarea id="summary" readonly></textarea><button id="edit" class="secondary full">返回修改資料</button>
+      </section>
+      <p id="global-error" class="error" role="alert" hidden></p>
+    </main>
+    <footer>1 ㎡＝0.3025 坪・依原始精度合計後取兩位<br>本工具協助換算，不能代替權狀／契約核對</footer>
+  </div>
+</body>
+</html>
