@@ -1,5 +1,9 @@
 # 房屋面積小工具
 
+正式網址：https://wuxia1005.github.io/mobile-area-tool/
+
+在 iPhone 用 Safari 開啟，透過「分享 → 加入主畫面」保留入口；不需要個人電腦持續開機。
+
 手機日常流程：LINE 收件 → 存至 iPhone 檔案／照片 → 選取文件 → 核對 → 計算 → 複製摘要／匯出 Excel／分享。
 
 這是純前端工具，不是 LINE 自動回覆機器人，不需要官方帳號、金鑰、付費 API 或個人電腦常開。發布成免費靜態網站後，手機直接使用；部署狀態見儲存庫的 Actions 與 Pages，實際 iPhone 操作仍需驗收。
