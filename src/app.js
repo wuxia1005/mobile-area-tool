@@ -1,10 +1,10 @@
-import { calculateAreas } from './core.js';
-import { extractCandidates } from './extract.js';
-import { inspectDocument, readDocument } from './readers.js';
-import { extractTranscript } from './transcript.js';
+import { calculateAreas } from './core.js?v=3';
+import { extractCandidates } from './extract.js?v=3';
+import { inspectDocument, readDocument } from './readers.js?v=3';
+import { extractTranscript } from './transcript.js?v=3';
 
 const fieldNames = ['main', 'accessory', 'common', 'parking'];
-const fieldLabels = { main: '主建物', accessory: '附屬建物', common: '共有部分', parking: '車位持分' };
+const fieldLabels = { main: '主建物', accessory: '附屬建物', common: '共有部分', parking: '車位面積' };
 const resultLabels = { without: '總坪數（不含車位）', with: '總坪數（含車位）', ratio: '公設比（扣車位）', public: '公設坪數（不含車位）', parking: '車位坪數', main: '主建物坪數', accessory: '附屬建物坪數' };
 const settingIds = ['scope', 'inclusion', 'share-numerator', 'share-denominator', 'share-confirmed', 'parking-scope', 'parking-share-numerator', 'parking-share-denominator', 'parking-share-confirmed'];
 const element = id => document.getElementById(id);
@@ -100,7 +100,7 @@ function resetDocument(file) {
 function renderTranscript() {
   const reading = state.transcriptReading;
   const panel = element('transcript-candidates'); panel.replaceChildren();
-  element('transcript-panel').open = state.transcript;
+  element('transcript-panel').open = state.transcript || Boolean(reading?.detected);
   if (!reading) panel.textContent = '尚無謄本候選。讀取後可在此核對；也可直接在下方手動輸入。';
   else {
     for (const [field, label] of Object.entries({ main: '主建物', accessory: '附屬建物／陽台', common: '共有總面積', commonShare: '共有持分', parkingShare: '車位持分' })) {
@@ -177,7 +177,7 @@ function selectPdfPages(text, count) {
 async function readSelectedFile() {
   clearError();
   let options;
-  try { options = state.metadata.kind === 'pdf' ? { pdfPages: selectPdfPages(element('pdf-pages').value, state.metadata.pageCount) } : state.metadata.kind === 'excel' ? { excelSheet: element('excel-sheet').value } : {}; } catch (error) { messageError(error); return; }
+  try { options = state.metadata.kind === 'pdf' ? element('pdf-auto').checked && state.transcript ? { autoTranscriptPages: true } : { pdfPages: selectPdfPages(element('pdf-pages').value, state.metadata.pageCount) } : state.metadata.kind === 'excel' ? { excelSheet: element('excel-sheet').value } : {}; } catch (error) { messageError(error); return; }
   const generation = ++state.generation;
   const controller = new AbortController(); state.controller = controller;
   element('progress-label').textContent = '準備讀取元件與模型'; element('progress').value = 0; showScreen('processing');
@@ -197,13 +197,16 @@ async function readSelectedFile() {
     state.extraction.candidates.push(...state.transcriptReading.candidates.filter(candidate => ['main', 'accessory', 'common'].includes(candidate.field)));
     for (const name of fieldNames) {
       const suggested = state.extraction.candidates.find(candidate => candidate.id === state.extraction.suggestions[name]);
-      if (suggested && !state.transcript && !state.transcriptReading.detected) Object.assign(state.fields[name], { value: suggested.value, unit: suggested.unit, sourceId: suggested.id, originalValue: suggested.value, originalUnit: suggested.unit });
+      if (suggested && !state.transcriptReading.detected) Object.assign(state.fields[name], { value: suggested.value, unit: suggested.unit, sourceId: suggested.id, originalValue: suggested.value, originalUnit: suggested.unit });
     }
+    if (state.transcriptReading.detected) applyTranscript();
     renderFieldControls(); renderSources(); renderTranscript(); updateCalculation(); showScreen('review');
   } catch (error) {
     if (generation !== state.generation) return;
     releaseImages();
-    showScreen('import');
+    if (state.metadata?.kind === 'pdf' && ['PDF_AUTO_SCAN_LIMIT', 'PDF_BUILDING_PAGE_NOT_FOUND', 'PDF_MULTIPLE_BUILDINGS'].includes(error.code)) {
+      element('pdf-auto').checked = false; element('pdf-pages').disabled = false; showScreen('selection');
+    } else showScreen('import');
     if (error.name !== 'AbortError') messageError(error);
   } finally { if (generation === state.generation) state.controller = null; }
 }
@@ -219,7 +222,7 @@ async function chooseFile(file) {
     if (metadata.kind === 'image') { await readSelectedFile(); return; }
     element('selection-name').textContent = file.name;
     element('pdf-choice').hidden = metadata.kind !== 'pdf'; element('sheet-choice').hidden = metadata.kind !== 'excel';
-    if (metadata.kind === 'pdf') { element('pdf-count').textContent = `共 ${metadata.pageCount} 頁。只會辨識你指定的頁面。`; element('pdf-pages').value = metadata.pageCount <= 5 ? `1${metadata.pageCount > 1 ? '-' + metadata.pageCount : ''}` : ''; }
+    if (metadata.kind === 'pdf') { element('pdf-count').textContent = `共 ${metadata.pageCount} 頁。自動模式先讀頁首找建物標示部；找不到時請改手動指定頁碼。`; element('pdf-pages').value = metadata.pageCount <= 5 ? `1${metadata.pageCount > 1 ? '-' + metadata.pageCount : ''}` : ''; element('pdf-auto').checked = state.transcript; element('pdf-auto').disabled = !state.transcript; element('pdf-pages').disabled = element('pdf-auto').checked; }
     if (metadata.kind === 'excel') {
       element('excel-sheet').replaceChildren();
       for (const sheet of metadata.sheets) { const name = typeof sheet === 'string' ? sheet : sheet.name; element('excel-sheet').add(new Option(name, name)); }
@@ -277,6 +280,7 @@ document.querySelectorAll('[data-pick]').forEach(button => button.addEventListen
 element('file-input').addEventListener('change', event => chooseFile(event.target.files[0]));
 element('manual').addEventListener('click', () => { clearError(); resetDocument(null); showScreen('review'); });
 element('start-read').addEventListener('click', readSelectedFile);
+element('pdf-auto').addEventListener('change', () => { element('pdf-pages').disabled = element('pdf-auto').checked; });
 element('cancel-selection').addEventListener('click', () => { clearError(); showScreen('import'); });
 element('cancel-read').addEventListener('click', () => { state.generation += 1; state.controller?.abort(); state.controller = null; releaseImages(); showScreen('import'); clearError(); });
 for (const id of settingIds) element(id).addEventListener(/(?:numerator|denominator)$/.test(id) ? 'input' : 'change', () => { if (/share-(?:numerator|denominator)$/.test(id)) { const confirmedId = id.startsWith('parking-') ? 'parking-share-confirmed' : 'share-confirmed'; addHistory(confirmedId, element(confirmedId).checked, false, '持分已修改，需重新核對'); element(confirmedId).checked = false; } if (id === 'scope') revokeOwnershipConfirmation(); if (id === 'parking-scope') revokeOwnershipConfirmation(false); addHistory(id, state.settings[id], element(id).type === 'checkbox' ? element(id).checked : element(id).value, '人工修改換算設定'); invalidate(); });
