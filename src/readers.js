@@ -1,3 +1,6 @@
+import { cleanTranscriptPixels } from './ocr-image.js?v=3';
+import { refineTranscript } from './ocr-refine.js?v=3';
+
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_CANVAS_PIXELS = 2500000;
 const MAX_PDF_IMAGE_PIXELS = 16000000;
@@ -208,6 +211,14 @@ function createCanvas(width, height) {
   return { canvas, context };
 }
 
+function cleanedCanvas(canvas) {
+  const drawing = createCanvas(canvas.width, canvas.height);
+  const original = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  const cleaned = cleanTranscriptPixels(original);
+  drawing.context.putImageData(new ImageData(cleaned.data, cleaned.width, cleaned.height), 0, 0);
+  return drawing.canvas;
+}
+
 async function emitPage(canvas, options, details) {
   checkAbort(options.signal);
   if (!options.onPage) return;
@@ -215,36 +226,6 @@ async function emitPage(canvas, options, details) {
   if (!blob) throw readerError('PREVIEW_FAILED', '無法產生頁面預覽，請換一個較小的檔案。');
   await options.onPage({ ...details, blob, width: canvas.width, height: canvas.height });
   checkAbort(options.signal);
-}
-
-async function refineTranscriptRows(canvas, records, ocr, options) {
-  if (!options.transcript) return records;
-  const targets = records.filter(record => record.bbox && /權利範圍|\d\s*分\s*之/u.test(record.text) && !/土地|基地|地號/u.test(record.text)).slice(0, 8);
-  await ocr.setParameters({ tessedit_pageseg_mode: '7' });
-  try {
-    for (const [index, record] of targets.entries()) {
-      checkAbort(options.signal);
-      report(options, 'ocr-row', `局部重讀持分列 ${index + 1}／${targets.length}，原文保留供核對`, 0);
-      const top = Math.max(0, Math.floor(record.bbox.y0) - 3);
-      const height = Math.min(canvas.height - top, Math.ceil(record.bbox.y1) - top + 3);
-      if (height <= 0) continue;
-      const dimensions = canvasDimensions(canvas.width, height, 2);
-      const drawing = createCanvas(dimensions.width, dimensions.height);
-      try {
-        drawing.context.drawImage(canvas, 0, top, canvas.width, height, 0, 0, dimensions.width, dimensions.height);
-        const result = await ocr.recognize(drawing.canvas);
-        const text = String(result.data.text || '').trim().replace(/\r?\n/gu, ' ');
-        if (text) {
-          record.originalText = record.text;
-          record.text = text;
-          record.source += '（持分列局部重讀）';
-          record.confidence = result.data.confidence;
-          record.unitHint = detectUnit(text);
-        }
-      } finally { drawing.canvas.width = 0; drawing.canvas.height = 0; }
-    }
-  } finally { if (!options.signal?.aborted) await ocr.setParameters({ tessedit_pageseg_mode: '6' }); }
-  return records;
 }
 
 function ocrRecords(data, source, pageNumber) {
@@ -376,23 +357,76 @@ function selectedPages(pageCount, requested, maxPages) {
   return unique;
 }
 
+async function findTranscriptPages(pdfDocument, pdfjs, ocr, options) {
+  if (pdfDocument.numPages > 12) throw readerError('PDF_AUTO_SCAN_LIMIT', '自動找頁最多檢查 12 頁，請關閉自動模式並指定建物標示頁。');
+  const found = [];
+  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+    checkAbort(options.signal);
+    report(options, 'find-page', `自動尋找建物標示頁 ${pageNumber}／${pdfDocument.numPages}`, (pageNumber - 1) / pdfDocument.numPages, { pageNumber });
+    const page = await abortable(pdfDocument.getPage(pageNumber), options.signal);
+    let canvas;
+    let header;
+    let centered;
+    try {
+      const base = page.getViewport({ scale: 1 });
+      const dimensions = canvasDimensions(base.width, base.height, 1.7);
+      const drawing = createCanvas(dimensions.width, dimensions.height);
+      canvas = drawing.canvas;
+      const render = page.render({ canvasContext: drawing.context, viewport: page.getViewport({ scale: dimensions.scale }), background: '#ffffff', annotationMode: pdfjs.AnnotationMode.ENABLE });
+      await abortable(render.promise, options.signal, () => render.cancel());
+      const drawingHeader = createCanvas(canvas.width, Math.ceil(canvas.height * 0.38));
+      header = drawingHeader.canvas;
+      drawingHeader.context.drawImage(canvas, 0, 0);
+      await ocr.setParameters({ tessedit_pageseg_mode: '6' });
+      const result = await ocr.recognize(header);
+      let heading = String(result.data.text).replace(/\s+/gu, '');
+      if (!/建物[標摽][示十]部/u.test(heading)) {
+        const cropWidth = Math.ceil(header.width * 0.44);
+        const focusedSize = canvasDimensions(cropWidth, header.height, 2);
+        const focused = createCanvas(focusedSize.width, focusedSize.height);
+        centered = focused.canvas;
+        focused.context.drawImage(header, Math.floor(header.width * 0.29), 0, cropWidth, header.height, 0, 0, centered.width, centered.height);
+        await ocr.setParameters({ tessedit_pageseg_mode: '11' });
+        const focusedResult = await ocr.recognize(centered);
+        heading = String(focusedResult.data.text).replace(/\s+/gu, '');
+        await ocr.setParameters({ tessedit_pageseg_mode: '6' });
+      }
+      if (/建物[標摽][示十]部/u.test(heading)) found.push(pageNumber);
+    } finally {
+      if (centered) { centered.width = 0; centered.height = 0; }
+      if (header) { header.width = 0; header.height = 0; }
+      if (canvas) { canvas.width = 0; canvas.height = 0; }
+      page.cleanup();
+    }
+  }
+  if (!found.length) throw readerError('PDF_BUILDING_PAGE_NOT_FOUND', '未能自動找到建物標示頁。請關閉「自動找建物標示頁」，手動填入該頁頁碼；一般面積表也請使用手動選頁。');
+  if (found.length > 1) throw readerError('PDF_MULTIPLE_BUILDINGS', `第 ${found.join('、')} 頁都含建物標示部，可能有不同建物。請關閉自動模式，一次選取一戶的建物標示頁，不會混用或加總。`);
+  return found;
+}
+
 async function readPdf(file, options) {
   report(options, 'read', '開啟 PDF', 0);
   const { document: pdfDocument, task, pdfjs } = await openPdf(file, options.signal);
   let ocr;
   const records = [];
   const warnings = ['PDF 僅辨識頁面上可見的畫面，不讀取隱藏文字層；辨識結果仍須對照原頁核對。', '為保護手機記憶體，PDF 內嵌圖片上限為 1,600 萬像素；超過上限的圖片可能被略過。請務必核對渲染預覽與原文件，若缺少內容，請先將該頁轉成較小的 JPG／PNG 再讀取。'];
-  if (options.transcript) warnings.push('已使用謄本表格模式及持分列局部重讀；持分、小數點仍須人工核對，同一戶請分頁讀取，不會跨頁拼湊。');
+  if (options.transcript) warnings.push('已使用謄本分區加強辨識；持分、小數點仍須核對，土地、所有權與抵押權資料不會混入建物面積。');
   try {
-    const pages = selectedPages(pdfDocument.numPages, options.pdfPages, options.maxPages);
-    const context = { pageNumber: pages[0], totalPages: pages.length };
+    let pages = options.autoTranscriptPages ? null : selectedPages(pdfDocument.numPages, options.pdfPages, options.maxPages);
+    const context = { pageNumber: pages?.[0], totalPages: pages?.length || pdfDocument.numPages };
     ocr = await createOcrSession(options, context);
+    if (options.autoTranscriptPages) {
+      pages = await findTranscriptPages(pdfDocument, pdfjs, ocr, options);
+      context.pageNumber = pages[0]; context.totalPages = pages.length;
+      warnings.push(`已自動選取第 ${pages.join('、')} 頁建物標示部；其餘頁未帶入面積。`);
+    }
     for (const pageNumber of pages) {
       checkAbort(options.signal);
       context.pageNumber = pageNumber;
       report(options, 'render', `處理第 ${pageNumber} 頁`, 0, context);
       const page = await abortable(pdfDocument.getPage(pageNumber), options.signal, () => task.destroy());
       let canvas;
+      let enhanced;
       try {
         const baseViewport = page.getViewport({ scale: 1 });
         const dimensions = canvasDimensions(baseViewport.width, baseViewport.height, 2);
@@ -403,11 +437,13 @@ async function readPdf(file, options) {
         await abortable(render.promise, options.signal, () => render.cancel());
         const source = `${file.name}，第 ${pageNumber} 頁`;
         await emitPage(canvas, options, { kind: 'pdf', fileName: file.name, pageNumber, source });
-        const result = await ocr.recognize(canvas);
-        const pageRecords = await refineTranscriptRows(canvas, ocrRecords(result.data, source, pageNumber), ocr, options);
+        enhanced = options.transcript ? cleanedCanvas(canvas) : canvas;
+        const result = await ocr.recognize(enhanced);
+        const pageRecords = await refineTranscript(enhanced, ocrRecords(result.data, source, pageNumber), ocr, { ...options, sourceScale: dimensions.scale });
         if (!pageRecords.length) warnings.push(`第 ${pageNumber} 頁沒有辨識到文字，請對照原頁或改傳清晰照片。`);
         records.push(...pageRecords);
       } finally {
+        if (enhanced && enhanced !== canvas) { enhanced.width = 0; enhanced.height = 0; }
         if (canvas) { canvas.width = 0; canvas.height = 0; }
         page.cleanup();
       }
@@ -442,13 +478,15 @@ async function readImage(file, options) {
   const dimensions = canvasDimensions(image.naturalWidth, image.naturalHeight, options.transcript ? 1.6 : 1);
   const { canvas, context } = createCanvas(dimensions.width, dimensions.height);
   let ocr;
+  let enhanced;
   try {
     context.drawImage(image, 0, 0, dimensions.width, dimensions.height);
     const source = `${file.name}，圖片`;
     await emitPage(canvas, options, { kind: 'image', fileName: file.name, pageNumber: 1, source });
     ocr = await createOcrSession(options, { pageNumber: 1, totalPages: 1 });
-    const result = await ocr.recognize(canvas);
-    const records = await refineTranscriptRows(canvas, ocrRecords(result.data, source, 1), ocr, options);
+    enhanced = options.transcript ? cleanedCanvas(canvas) : canvas;
+    const result = await ocr.recognize(enhanced);
+    const records = await refineTranscript(enhanced, ocrRecords(result.data, source, 1), ocr, { ...options, sourceScale: dimensions.scale, sourceImage: image });
     const warnings = ['圖片文字由手機辨識，請核對小數點、面積與單位。'];
     if (options.transcript) warnings.push('已使用謄本表格模式及持分列局部重讀；仍可能錯讀分母、零的個數或小數點，請對照原圖，不會自動確認持分。');
     if (!records.length) warnings.push('沒有辨識到文字，請選擇清楚、正向且完整的圖片，或手動輸入。');
@@ -456,6 +494,7 @@ async function readImage(file, options) {
     report(options, 'complete', '圖片辨識完成', 1);
     return { kind: 'image', records, warnings, meta: { fileName: file.name, pageCount: 1, method: 'local-image-ocr', width: dimensions.width, height: dimensions.height } };
   } finally {
+    if (enhanced && enhanced !== canvas) { enhanced.width = 0; enhanced.height = 0; }
     image.src = '';
     canvas.width = 0;
     canvas.height = 0;
