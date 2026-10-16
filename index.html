@@ -17,11 +17,12 @@
 </head>
 <body>
   <div class="app">
-    <header><div><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version">第一版</span></header>
+    <header><div><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version">謄本核對版</span></header>
     <ol class="steps" aria-label="操作步驟"><li data-step="import" aria-current="step">① 選擇檔案</li><li data-step="review">② 核對資料</li><li data-step="result">③ 查看結果</li></ol>
     <main>
       <section data-screen="import">
         <h2>從 LINE 收到檔案？</h2><p class="muted">先存到 iPhone 的「檔案」或「照片」，再選取要換算的文件。</p>
+        <label class="check"><input id="transcript-mode" type="checkbox"><span>這是建物謄本：使用表格加強辨識與持分核對（PDF／圖片）</span></label>
         <div class="imports"><button data-pick="pdf"><span class="file-type">PDF</span><span>選擇 PDF<small>逐頁辨識可見內容，每次最多 5 頁</small></span></button><button data-pick="image"><span class="file-type">圖片</span><span>選擇圖片<small>JPG、PNG、WebP；請保留清晰文字</small></span></button><button data-pick="excel"><span class="file-type">Excel</span><span>選擇 Excel<small>XLSX、XLS；先選工作表</small></span></button></div>
         <input id="file-input" type="file" hidden>
         <div class="note">不會讀取 LINE 聊天室，也不會把文件上傳。辨識時請保持此頁開啟，先勿鎖屏。</div>
@@ -39,9 +40,12 @@
         <h2>確認這一戶的面積</h2><p id="source-name" class="muted source-name"></p>
         <div id="read-warnings" class="note" hidden></div>
         <details id="source-details"><summary>查看來源原圖與讀取文字</summary><div id="source-images"></div><div id="source-records" class="source-records"></div></details>
+        <details id="transcript-panel"><summary>謄本專用核對：主建物、陽台與兩組持分</summary><p class="hint">主建物與陽台填本戶面積；共有部分填謄本的共有總面積，再分別輸入共有與車位的權利範圍。「100000 分之 300」表示分子 300、分母 100000。請特別核對小數點、分母零的個數與共有建號；不要把土地持分或停車位數帶入。</p><div id="transcript-candidates" class="note"></div><button id="apply-transcript" class="secondary full" disabled>帶入單一候選（覆蓋對應欄位，仍須核對）</button><button id="retry-transcript" class="secondary full" hidden>用謄本表格模式重新辨識（清除本次輸入）</button></details>
         <div id="fields" class="fields"></div>
         <label for="scope">共有部分的面積範圍</label><select id="scope"><option value="unknown">請核對：本戶／全棟／全層？</option><option value="household">本戶已分攤的面積</option><option value="whole">全棟／全層，需按本戶持分換算</option></select>
-        <div id="share-fields" class="share-fields" hidden><p class="hint">只對共有部分套用一次持分；車位請另填本戶持分面積。</p><div class="two-columns"><label>持分分子<input id="share-numerator" type="text" inputmode="numeric"></label><label>持分分母<input id="share-denominator" type="text" inputmode="numeric"></label></div><label class="check"><input id="share-confirmed" type="checkbox"><span>已確認這組持分適用於上方共有部分</span></label></div>
+        <div id="share-fields" class="share-fields" hidden><p class="hint">本戶共有＝上方共有總面積 × 共有持分。車位持分在下方另外確認，不共用分子。</p><div class="two-columns"><label>共有持分分子<input id="share-numerator" type="text" inputmode="numeric" maxlength="12"></label><label>共有持分分母<input id="share-denominator" type="text" inputmode="numeric" maxlength="12"></label></div><label class="check"><input id="share-confirmed" type="checkbox"><span>已確認這組持分適用於上方共有部分</span></label></div>
+        <label for="parking-scope">車位面積的換算方式</label><select id="parking-scope"><option value="household">已知本戶車位面積，直接輸入</option><option value="common">同一筆共有總面積 × 車位持分</option></select>
+        <div id="parking-share-fields" class="share-fields" hidden><p class="hint">車位＝上方未分攤的共有總面積 × 車位持分；不會再乘共有持分，也不使用手動車位欄。</p><div class="two-columns"><label>車位持分分子<input id="parking-share-numerator" type="text" inputmode="numeric" maxlength="12"></label><label>車位持分分母<input id="parking-share-denominator" type="text" inputmode="numeric" maxlength="12"></label></div><label class="check"><input id="parking-share-confirmed" type="checkbox"><span>已核對車位持分適用同一共有建號及上方共有總面積</span></label><p id="parking-share-output" class="feedback" aria-live="polite"></p></div>
         <label for="inclusion">上述共有部分是否已包含車位？</label><select id="inclusion"><option value="unknown">不確定，先不算衍生結果</option><option value="included">已含車位，計算公設時扣除</option><option value="excluded">未含車位，車位另外列計</option></select>
         <p id="review-feedback" class="feedback" aria-live="polite"></p><p id="review-errors" class="error" role="alert" hidden></p>
         <label class="check"><input id="confirmed" type="checkbox"><span>已核對數值、單位、來源與車位關係。空白代表資料不足，不當作 0。</span></label>
