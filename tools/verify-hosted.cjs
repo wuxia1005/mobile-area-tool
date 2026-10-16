@@ -34,7 +34,7 @@ function deploymentUrl(argument) {
 async function main() {
   if (process.argv.includes('--help')) {
     console.log('用法：node tools/verify-hosted.cjs https://example.github.io/repository/');
-    console.log('使用隱藏 Edge；只讀部署網站，不修改遠端。需先備妥 test-results/synthetic-area.png、synthetic-visible.pdf、synthetic-area.xlsx。');
+    console.log('使用隱藏 Edge；只讀部署網站，不修改遠端。需先執行 browser-smoke 產生 test-results 內的合成圖片、PDF 與 Excel。');
     console.log('可設定 CODEX_WORKSPACE_NODE_MODULES、PLAYWRIGHT_BROWSER_EXECUTABLE、HOSTED_OCR_TIMEOUT_MS。');
     return;
   }
@@ -43,7 +43,7 @@ async function main() {
   const output = path.join(project, 'test-results', 'hosted');
   const fixtureDirectory = path.join(project, 'test-results');
   const fixtures = {};
-  for (const [kind, name] of Object.entries({ image: 'synthetic-area.png', pdf: 'synthetic-visible.pdf', excel: 'synthetic-area.xlsx' })) {
+  for (const [kind, name] of Object.entries({ image: 'synthetic-area.png', pdf: 'synthetic-visible.pdf', excel: 'synthetic-area.xlsx', transcript: 'synthetic-transcript.xlsx', ambiguous: 'synthetic-transcript-ambiguous.xlsx', transcriptPdf: 'synthetic-transcript.pdf', multiplePdf: 'synthetic-transcript-multiple.pdf' })) {
     try {
       fixtures[kind] = await fs.readFile(path.join(fixtureDirectory, name));
     } catch {
@@ -113,6 +113,7 @@ async function main() {
     await page.locator('#manual').waitFor({ state: 'visible' });
     await page.waitForFunction(() => typeof globalThis.XLSX?.read === 'function' && typeof globalThis.Tesseract?.createWorker === 'function');
     assert.equal(await page.locator('h1').textContent(), '房屋面積小工具');
+    assert.equal(await page.locator('#transcript-mode').isChecked(), true);
     for (const kind of ['pdf', 'image', 'excel']) assert.equal(await page.locator(`[data-pick="${kind}"]`).isVisible(), true);
     assert.equal(new URL(page.url()).origin, deployment.origin);
     assert.ok(new URL(page.url()).pathname.startsWith(deployment.pathname));
@@ -157,6 +158,31 @@ async function main() {
     checks.push('本機合成 Excel 讀取與隱藏內容排除');
 
     await backToImport();
+    await page.locator('#file-input').setInputFiles({ name: 'synthetic-transcript.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: fixtures.transcript });
+    await page.locator('#selection').waitFor({ state: 'visible' }); await page.locator('#start-read').click(); await waitForReview();
+    for (const [field, value] of Object.entries({ main: '60.00', accessory: '5.00', common: '10000.00' })) assert.equal(await page.locator(`#field-${field}`).inputValue(), value);
+    assert.equal(await page.locator('#share-numerator').inputValue(), '600');
+    assert.equal(await page.locator('#parking-share-numerator').inputValue(), '300');
+    assert.equal(await page.locator('#scope').inputValue(), 'whole');
+    assert.equal(await page.locator('#parking-scope').inputValue(), 'common');
+    for (const id of ['confirmed', 'share-confirmed', 'parking-share-confirmed']) assert.equal(await page.locator(`#${id}`).isChecked(), false);
+    assert.equal(await page.locator('#inclusion').inputValue(), 'unknown');
+    assert.equal(await page.locator('#calculate').isDisabled(), true);
+    checks.push('單一謄本候選自動帶入，持分／車位關係與人工確認不自動勾選');
+
+    await backToImport();
+    await page.locator('#file-input').setInputFiles({ name: 'synthetic-transcript-ambiguous.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: fixtures.ambiguous });
+    await page.locator('#selection').waitFor({ state: 'visible' }); await page.locator('#start-read').click(); await waitForReview();
+    for (const field of ['main', 'accessory', 'common', 'parking']) assert.equal(await page.locator(`#field-${field}`).inputValue(), '');
+    assert.equal(await page.locator('#share-numerator').inputValue(), '');
+    assert.equal(await page.locator('#parking-share-numerator').inputValue(), '');
+    assert.equal(await page.locator('#apply-transcript').isDisabled(), true);
+    assert.equal(await page.locator('#confirmed').isChecked(), false);
+    assert.equal(await page.locator('#calculate').isDisabled(), true);
+    assert.match(await page.locator('#transcript-candidates').textContent(), /多個建物|不能混用/);
+    checks.push('多個建物標示部不自動帶入，不混用面積與持分');
+
+    await backToImport();
     await page.locator('#file-input').setInputFiles({ name: 'synthetic-area.png', mimeType: 'image/png', buffer: fixtures.image });
     await waitForReview();
     const imageText = await page.locator('#source-records').textContent();
@@ -169,6 +195,9 @@ async function main() {
     await backToImport();
     await page.locator('#file-input').setInputFiles({ name: 'synthetic-visible.pdf', mimeType: 'application/pdf', buffer: fixtures.pdf });
     await page.locator('#selection').waitFor({ state: 'visible', timeout: 60000 });
+    assert.equal(await page.locator('#pdf-auto').isChecked(), true);
+    assert.equal(await page.locator('#pdf-pages').isDisabled(), true);
+    await page.locator('#pdf-auto').uncheck();
     await page.locator('#pdf-pages').fill('1');
     await page.locator('#start-read').click();
     await waitForReview();
@@ -180,6 +209,32 @@ async function main() {
     assert.equal(await page.locator('#source-images img').count(), 1);
     await page.screenshot({ path: path.join(output, 'pdf-phone.png'), fullPage: true });
     checks.push('真實 PDF 第一頁渲染後 OCR，遮蓋文字不進入結果');
+
+    await backToImport();
+    await page.locator('#file-input').setInputFiles({ name: 'synthetic-transcript.pdf', mimeType: 'application/pdf', buffer: fixtures.transcriptPdf });
+    await page.locator('#selection').waitFor({ state: 'visible', timeout: 60000 });
+    assert.equal(await page.locator('#pdf-auto').isChecked(), true);
+    await page.locator('#start-read').click(); await waitForReview();
+    assert.equal(await page.locator('#source-images img').count(), 1);
+    const transcriptPdfText = await page.locator('#source-records').textContent();
+    assert.match(transcriptPdfText, /第 2 頁/);
+    assert.ok(!transcriptPdfText.includes('700.00'));
+    assert.ok(!transcriptPdfText.includes('20000000'));
+    assert.equal(await page.locator('#field-main').inputValue(), '60.00');
+    for (const id of ['confirmed', 'share-confirmed', 'parking-share-confirmed']) assert.equal(await page.locator(`#${id}`).isChecked(), false);
+    assert.equal(await page.locator('#calculate').isDisabled(), true);
+    checks.push('自動找出唯一建物標示頁，不帶入土地與抵押權頁資料');
+
+    await backToImport();
+    await page.locator('#file-input').setInputFiles({ name: 'synthetic-transcript-multiple.pdf', mimeType: 'application/pdf', buffer: fixtures.multiplePdf });
+    await page.locator('#selection').waitFor({ state: 'visible', timeout: 60000 }); await page.locator('#start-read').click();
+    await page.locator('#global-error').waitFor({ state: 'visible', timeout: ocrTimeout });
+    assert.match(await page.locator('#global-error').textContent(), /不同建物|一戶/);
+    assert.equal(await page.locator('#selection').isVisible(), true);
+    assert.equal(await page.locator('#pdf-auto').isChecked(), false);
+    assert.equal(await page.locator('#pdf-pages').isDisabled(), false);
+    assert.equal(await page.locator('#source-images img').count(), 0);
+    checks.push('多個建物頁中止自動模式，返回手動頁碼選擇');
 
     const requestedPaths = requests.filter(request => new URL(request.url).origin === deployment.origin).map(request => new URL(request.url).pathname);
     for (const asset of ['vendor/tesseract/worker.min.js', 'vendor/lang/chi_tra.traineddata.gz', 'vendor/lang/eng.traineddata.gz', 'vendor/pdfjs/pdf.mjs', 'vendor/pdfjs/pdf.worker.mjs']) {
