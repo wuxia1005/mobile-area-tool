@@ -1,0 +1,93 @@
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const os = require('node:os');
+const assert = require('node:assert/strict');
+const runtimeModules = process.env.CODEX_WORKSPACE_NODE_MODULES || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules');
+const { chromium } = require(path.join(runtimeModules, 'playwright'));
+const { PDFDocument, StandardFonts, rgb } = require(path.join(runtimeModules, 'pdf-lib'));
+const { createRequire } = require('node:module');
+
+(async () => {
+  const directory = path.resolve(__dirname, '..');
+  const output = path.join(directory, 'test-results');
+  await fs.mkdir(output, { recursive: true });
+  await fs.copyFile(path.join(directory, 'dist/vendor/xlsx.full.min.js'), path.join(output, 'xlsx.cjs'));
+  const XLSX = createRequire(__filename)(path.join(output, 'xlsx.cjs'));
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([['主建物（㎡）', '附屬建物（㎡）', '共有部分（㎡）', '車位面積（㎡）'], [70, 10, 50, 20], ['SECRET-HIDDEN', 9999, 8888, 7777]]);
+  sheet['!rows'] = [{}, {}, { hidden: true }];
+  XLSX.utils.book_append_sheet(workbook, sheet, '本戶面積');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['SECRET-SHEET', 1111]]), '隱藏');
+  workbook.Workbook = { Sheets: [{ Hidden: 0 }, { Hidden: 1 }] };
+  const excelPath = path.join(output, 'synthetic-area.xlsx');
+  await fs.writeFile(excelPath, Buffer.from(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })));
+  const browser = await chromium.launch({ headless: true, executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 900 }, acceptDownloads: true });
+    page.setDefaultTimeout(15000);
+    const errors = []; const outbound = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:4173/') && !/^(blob:|data:)/.test(request.url())) outbound.push(request.url()); });
+    await page.goto('http://127.0.0.1:4173');
+    await page.locator('#manual').click();
+    for (const [name, value] of Object.entries({ main: '70', accessory: '10', common: '50', parking: '20' })) await page.locator(`#field-${name}`).fill(value);
+    await page.locator('#scope').selectOption('household'); await page.locator('#inclusion').selectOption('included'); await page.locator('#confirmed').check(); await page.locator('#calculate').click();
+    assert.equal(await page.locator('[data-result="without"]').textContent(), '33.28 坪');
+    assert.equal(await page.locator('[data-result="ratio"]').textContent(), '27.27%');
+    await page.screenshot({ path: path.join(output, 'results-phone.png'), fullPage: true });
+    const privateDownloadEvent = page.waitForEvent('download'); await page.locator('#export').click(); const privateDownload = await privateDownloadEvent;
+    const privatePath = path.join(output, 'summary-only.xlsx'); await privateDownload.saveAs(privatePath);
+    assert.deepEqual(XLSX.read(new Uint8Array(await fs.readFile(privatePath))).SheetNames, ['換算結果']);
+    await page.locator('#include-source').check();
+    const downloadEvent = page.waitForEvent('download'); await page.locator('#export').click(); const download = await downloadEvent;
+    const downloadPath = path.join(output, 'actual-export.xlsx'); await download.saveAs(downloadPath);
+    const exported = XLSX.read(new Uint8Array(await fs.readFile(downloadPath)), { cellNF: true });
+    assert.equal(exported.Sheets['換算結果'].B7.v, 33.28);
+    assert.equal(exported.Sheets['換算結果'].B9.v, 0.2727);
+    assert.equal(exported.Sheets['換算結果'].B9.z, '0.00%');
+    assert.deepEqual(exported.SheetNames, ['換算結果', '核對與來源', '原始讀取', '修正紀錄']);
+    await page.locator('#edit').click(); await page.locator('#field-accessory').fill('   '); await page.locator('#confirmed').check(); await page.locator('#calculate').click();
+    const whitespaceEvent = page.waitForEvent('download'); await page.locator('#export').click(); const whitespaceDownload = await whitespaceEvent; const whitespacePath = path.join(output, 'whitespace-export.xlsx'); await whitespaceDownload.saveAs(whitespacePath);
+    const whitespaceBook = XLSX.read(new Uint8Array(await fs.readFile(whitespacePath)));
+    assert.ok(!whitespaceBook.Sheets['核對與來源'].B3 || whitespaceBook.Sheets['核對與來源'].B3.v === '');
+    assert.equal(whitespaceBook.Sheets['換算結果'].B7.v, '待確認');
+    await page.locator('#edit').click(); await page.locator('#back-import').click();
+    await page.locator('#file-input').setInputFiles(excelPath);
+    await page.locator('#selection').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#excel-sheet option').count(), 1);
+    await page.locator('#start-read').click(); await page.locator('[data-screen="review"]').waitFor({ state: 'visible' });
+    assert.ok(!(await page.locator('#source-records').textContent()).includes('SECRET'));
+    assert.equal(await page.locator('#field-main').inputValue(), '70');
+    assert.equal(await page.locator('#field-parking').inputValue(), '20');
+    await page.screenshot({ path: path.join(output, 'excel-review-phone.png'), fullPage: true });
+    const imageData = await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = 1500; canvas.height = 650;
+      const context = canvas.getContext('2d'); context.fillStyle = '#fff'; context.fillRect(0, 0, 1500, 650); context.fillStyle = '#111'; context.font = '48px "Microsoft JhengHei", sans-serif';
+      ['主建物 70.00 平方公尺', '附屬建物 10.00 平方公尺', '共有部分 50.00 平方公尺', '車位面積 20.00 平方公尺', 'SYNTHETIC TEST - NOT REAL DATA'].forEach((text, index) => context.fillText(text, 60, 85 + index * 110));
+      return canvas.toDataURL('image/png');
+    });
+    const imageBytes = Buffer.from(imageData.split(',')[1], 'base64'); const imagePath = path.join(output, 'synthetic-area.png'); await fs.writeFile(imagePath, imageBytes);
+    await page.locator('#back-import').click(); await page.locator('#file-input').setInputFiles(imagePath);
+    await page.locator('[data-screen="review"]').waitFor({ state: 'visible', timeout: 180000 });
+    const imageRead = await page.locator('#source-records').textContent();
+    assert.match(imageRead, /70[.,]00|70/); assert.match(imageRead, /20[.,]00|20/);
+    await page.screenshot({ path: path.join(output, 'image-review-phone.png'), fullPage: true });
+    const pdf = await PDFDocument.create(); const png = await pdf.embedPng(imageBytes); const font = await pdf.embedFont(StandardFonts.Helvetica);
+    for (let index = 0; index < 6; index += 1) {
+      const pdfPage = pdf.addPage([750, 400]); pdfPage.drawImage(png, { x: 0, y: 40, width: 750, height: 325 });
+      pdfPage.drawText('SECRET-HIDDEN-9999', { x: 30, y: 12, size: 18, font });
+      pdfPage.drawRectangle({ x: 20, y: 0, width: 500, height: 38, color: rgb(0, 0, 0) });
+    }
+    const pdfPath = path.join(output, 'synthetic-visible.pdf'); await fs.writeFile(pdfPath, await pdf.save());
+    await page.locator('#back-import').click(); await page.locator('#file-input').setInputFiles(pdfPath); await page.locator('#selection').waitFor({ state: 'visible', timeout: 30000 });
+    assert.equal(await page.locator('#pdf-pages').inputValue(), '');
+    await page.locator('#pdf-pages').fill('1-6'); await page.locator('#start-read').click(); assert.match(await page.locator('#global-error').textContent(), /最多 5 頁/);
+    await page.locator('#pdf-pages').fill('1'); await page.locator('#start-read').click(); await page.locator('[data-screen="review"]').waitFor({ state: 'visible', timeout: 180000 });
+    const pdfRead = await page.locator('#source-records').textContent(); assert.match(pdfRead, /70/); assert.ok(!pdfRead.includes('SECRET-HIDDEN')); assert.ok(!pdfRead.includes('9999'));
+    await page.screenshot({ path: path.join(output, 'pdf-review-phone.png'), fullPage: true });
+    for (const width of [320, 390, 736]) { await page.setViewportSize({ width, height: 900 }); const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth); assert.equal(overflow, false, `overflow at ${width}`); }
+    await page.setViewportSize({ width: 390, height: 900 }); await page.emulateMedia({ colorScheme: 'dark' }); await page.screenshot({ path: path.join(output, 'dark-phone.png'), fullPage: true });
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ result: 'passed', checks: ['manual calculation', 'real xlsx export', 'real Excel import', 'hidden rows and sheets excluded', 'real image OCR', 'visible PDF OCR', 'covered PDF text excluded', 'explicit PDF range selection', 'no off-site requests', 'responsive widths', 'dark mode', 'no page errors'], output }));
+  } finally { await browser.close(); }
+})().catch(error => { process.stderr.write(error.stack || String(error)); process.exitCode = 1; });
