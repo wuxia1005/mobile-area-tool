@@ -217,6 +217,36 @@ async function emitPage(canvas, options, details) {
   checkAbort(options.signal);
 }
 
+async function refineTranscriptRows(canvas, records, ocr, options) {
+  if (!options.transcript) return records;
+  const targets = records.filter(record => record.bbox && /權利範圍|\d\s*分\s*之/u.test(record.text) && !/土地|基地|地號/u.test(record.text)).slice(0, 8);
+  await ocr.setParameters({ tessedit_pageseg_mode: '7' });
+  try {
+    for (const [index, record] of targets.entries()) {
+      checkAbort(options.signal);
+      report(options, 'ocr-row', `局部重讀持分列 ${index + 1}／${targets.length}，原文保留供核對`, 0);
+      const top = Math.max(0, Math.floor(record.bbox.y0) - 3);
+      const height = Math.min(canvas.height - top, Math.ceil(record.bbox.y1) - top + 3);
+      if (height <= 0) continue;
+      const dimensions = canvasDimensions(canvas.width, height, 2);
+      const drawing = createCanvas(dimensions.width, dimensions.height);
+      try {
+        drawing.context.drawImage(canvas, 0, top, canvas.width, height, 0, 0, dimensions.width, dimensions.height);
+        const result = await ocr.recognize(drawing.canvas);
+        const text = String(result.data.text || '').trim().replace(/\r?\n/gu, ' ');
+        if (text) {
+          record.originalText = record.text;
+          record.text = text;
+          record.source += '（持分列局部重讀）';
+          record.confidence = result.data.confidence;
+          record.unitHint = detectUnit(text);
+        }
+      } finally { drawing.canvas.width = 0; drawing.canvas.height = 0; }
+    }
+  } finally { if (!options.signal?.aborted) await ocr.setParameters({ tessedit_pageseg_mode: '6' }); }
+  return records;
+}
+
 function ocrRecords(data, source, pageNumber) {
   const lines = [];
   for (const block of data.blocks || []) {
@@ -306,7 +336,7 @@ async function createOcrSession(options, context) {
   try {
     await abortable(initialization, options.signal, cancelInitialization);
     options.signal?.addEventListener('abort', onAbort, { once: true });
-    await abortable(worker.setParameters({ preserve_interword_spaces: '1', user_defined_dpi: '150', tessedit_pageseg_mode: '3' }), options.signal, terminate);
+    await abortable(worker.setParameters({ preserve_interword_spaces: '1', user_defined_dpi: options.transcript ? '200' : '150', tessedit_pageseg_mode: options.transcript ? '6' : '3' }), options.signal, terminate);
   } catch (error) {
     options.signal?.removeEventListener('abort', onAbort);
     if (worker) {
@@ -322,6 +352,7 @@ async function createOcrSession(options, context) {
     throw error;
   }
   return {
+    setParameters: parameters => abortable(worker.setParameters(parameters), options.signal, terminate),
     recognize: canvas => abortable(worker.recognize(canvas, {}, { text: true, blocks: true }), options.signal, terminate),
     async close() {
       options.signal?.removeEventListener('abort', onAbort);
@@ -351,6 +382,7 @@ async function readPdf(file, options) {
   let ocr;
   const records = [];
   const warnings = ['PDF 僅辨識頁面上可見的畫面，不讀取隱藏文字層；辨識結果仍須對照原頁核對。', '為保護手機記憶體，PDF 內嵌圖片上限為 1,600 萬像素；超過上限的圖片可能被略過。請務必核對渲染預覽與原文件，若缺少內容，請先將該頁轉成較小的 JPG／PNG 再讀取。'];
+  if (options.transcript) warnings.push('已使用謄本表格模式及持分列局部重讀；持分、小數點仍須人工核對，同一戶請分頁讀取，不會跨頁拼湊。');
   try {
     const pages = selectedPages(pdfDocument.numPages, options.pdfPages, options.maxPages);
     const context = { pageNumber: pages[0], totalPages: pages.length };
@@ -372,7 +404,7 @@ async function readPdf(file, options) {
         const source = `${file.name}，第 ${pageNumber} 頁`;
         await emitPage(canvas, options, { kind: 'pdf', fileName: file.name, pageNumber, source });
         const result = await ocr.recognize(canvas);
-        const pageRecords = ocrRecords(result.data, source, pageNumber);
+        const pageRecords = await refineTranscriptRows(canvas, ocrRecords(result.data, source, pageNumber), ocr, options);
         if (!pageRecords.length) warnings.push(`第 ${pageNumber} 頁沒有辨識到文字，請對照原頁或改傳清晰照片。`);
         records.push(...pageRecords);
       } finally {
@@ -407,7 +439,7 @@ async function loadImage(file, signal) {
 async function readImage(file, options) {
   report(options, 'read', '開啟圖片', 0);
   const image = await loadImage(file, options.signal);
-  const dimensions = canvasDimensions(image.naturalWidth, image.naturalHeight);
+  const dimensions = canvasDimensions(image.naturalWidth, image.naturalHeight, options.transcript ? 1.6 : 1);
   const { canvas, context } = createCanvas(dimensions.width, dimensions.height);
   let ocr;
   try {
@@ -416,8 +448,9 @@ async function readImage(file, options) {
     await emitPage(canvas, options, { kind: 'image', fileName: file.name, pageNumber: 1, source });
     ocr = await createOcrSession(options, { pageNumber: 1, totalPages: 1 });
     const result = await ocr.recognize(canvas);
-    const records = ocrRecords(result.data, source, 1);
+    const records = await refineTranscriptRows(canvas, ocrRecords(result.data, source, 1), ocr, options);
     const warnings = ['圖片文字由手機辨識，請核對小數點、面積與單位。'];
+    if (options.transcript) warnings.push('已使用謄本表格模式及持分列局部重讀；仍可能錯讀分母、零的個數或小數點，請對照原圖，不會自動確認持分。');
     if (!records.length) warnings.push('沒有辨識到文字，請選擇清楚、正向且完整的圖片，或手動輸入。');
     if (dimensions.scale < 1) warnings.push('為降低手機記憶體用量，辨識圖片已縮小；小字不清楚時請裁切相關區域再傳入。');
     report(options, 'complete', '圖片辨識完成', 1);

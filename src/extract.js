@@ -71,6 +71,7 @@ function excludedNumber(text, start, end, units) {
   const before = text.slice(0, start);
   const after = text.slice(end);
   if (/[\d.,/／]$/u.test(before) || /^[\d.,/／]/u.test(after)) return true;
+  if (/\d\s+$/u.test(before) || /^\s+\d/u.test(after)) return true;
   if (/[A-Za-z]$/u.test(before) && !/[mM]$/u.test(before)) return true;
   if (/^\s*(?:%|元|萬元|億元|個|格|輛|戶|位|房|廳|衛|棟|筆|年|月|日|樓|層|F\b)/iu.test(after)) return true;
   if (/(?:總價|單價|售價|價格|價款|戶號|室號|建號|地號|編號|日期)\s*[:：]?\s*$/u.test(before)) return true;

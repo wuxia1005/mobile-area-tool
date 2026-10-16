@@ -105,32 +105,35 @@ function parseArea(fieldName, fieldInput, errors) {
   return result;
 }
 
-function parseShare(input, errors, warnings) {
-  const numeratorText = sourceText(input.shareNumerator);
-  const denominatorText = sourceText(input.shareDenominator);
-  const confirmed = input.shareConfirmed === true;
+function parseShare(input, errors, warnings, parking = false) {
+  const numeratorField = parking ? 'parkingShareNumerator' : 'shareNumerator';
+  const denominatorField = parking ? 'parkingShareDenominator' : 'shareDenominator';
+  const numeratorText = sourceText(input[numeratorField]);
+  const denominatorText = sourceText(input[denominatorField]);
+  const confirmed = input[parking ? 'parkingShareConfirmed' : 'shareConfirmed'] === true;
+  const label = parking ? '車位持分' : '持分';
   const result = { numerator: numeratorText, denominator: denominatorText, confirmed, fraction: null, applied: false };
-  if (input.commonScope !== 'whole') return result;
+  if (parking ? input.parkingScope !== 'common' : input.commonScope !== 'whole') return result;
   const shareErrorsBefore = errors.length;
-  for (const [fieldName, value, label] of [
-    ['shareNumerator', numeratorText, '持分分子'],
-    ['shareDenominator', denominatorText, '持分分母'],
+  for (const [fieldName, value, partLabel] of [
+    [numeratorField, numeratorText, `${label}分子`],
+    [denominatorField, denominatorText, `${label}分母`],
   ]) {
     if (!value && !confirmed) continue;
     if (!/^[0-9]{1,12}$/.test(value) || BigInt(value) <= 0n) {
-      errors.push({ field: fieldName, message: `${label}須為 1 至 999,999,999,999 的整數。` });
+      errors.push({ field: fieldName, message: `${partLabel}須為 1 至 999,999,999,999 的整數。` });
     }
   }
   if (errors.length !== shareErrorsBefore) return result;
   if (numeratorText && denominatorText) {
     if (BigInt(numeratorText) > BigInt(denominatorText)) {
-      errors.push({ field: 'shareNumerator', message: '持分分子不得大於分母。' });
+      errors.push({ field: numeratorField, message: `${label}分子不得大於分母。` });
       return result;
     }
     result.fraction = rational(BigInt(numeratorText), BigInt(denominatorText));
   }
   if (!confirmed || !result.fraction) {
-    warnings.push('整體共有面積必須填寫並勾選確認持分，才會計算本戶共有面積。');
+    warnings.push(parking ? '車位持分必須另填分子、分母並確認適用同一筆共有總面積，才會計算本戶車位面積。' : '整體共有面積必須填寫並勾選確認持分，才會計算本戶共有面積。');
     return result;
   }
   result.applied = true;
@@ -147,9 +150,10 @@ export function calculateAreas(input = {}) {
   const errors = [];
   const warnings = [];
   const sourceFields = safeInput.fields && typeof safeInput.fields === 'object' ? safeInput.fields : {};
+  const parkingScope = safeInput.parkingScope ?? 'household';
   const fields = Object.fromEntries(Object.keys(AREA_LABELS).map((fieldName) => [
     fieldName,
-    parseArea(fieldName, sourceFields[fieldName], errors),
+    parseArea(fieldName, fieldName === 'parking' && parkingScope === 'common' ? {} : sourceFields[fieldName], errors),
   ]));
   const commonScope = safeInput.commonScope ?? 'unknown';
   const commonIncludesParking = safeInput.commonIncludesParking ?? 'unknown';
@@ -159,12 +163,20 @@ export function calculateAreas(input = {}) {
   if (!['included', 'excluded', 'unknown'].includes(commonIncludesParking)) {
     errors.push({ field: 'commonIncludesParking', message: '請選擇有效的共有部分與車位關係。' });
   }
+  if (!['household', 'common'].includes(parkingScope)) {
+    errors.push({ field: 'parkingScope', message: '請選擇有效的車位面積換算方式。' });
+  }
+  if (parkingScope === 'common' && commonScope !== 'whole') {
+    errors.push({ field: 'parkingScope', message: '車位按共有總面積持分換算時，上方共有範圍必須選全棟／全層；不能對本戶共有面積再乘一次持分。' });
+  }
   const share = parseShare({ ...safeInput, commonScope }, errors, warnings);
+  const parkingShare = parseShare({ ...safeInput, parkingScope }, errors, warnings, true);
+  if (parkingScope === 'common' && (commonScope !== 'whole' || !fields.common.ping)) parkingShare.applied = false;
   const values = {
     main: fields.main.ping,
     accessory: fields.accessory.ping,
     common: null,
-    parking: fields.parking.ping,
+    parking: parkingScope === 'household' ? fields.parking.ping : null,
     public: null,
     without: null,
     with: null,
@@ -173,6 +185,9 @@ export function calculateAreas(input = {}) {
   if (commonScope === 'household') values.common = fields.common.ping;
   if (commonScope === 'whole' && share.applied && fields.common.ping) {
     values.common = multiply(fields.common.ping, share.fraction);
+  }
+  if (parkingScope === 'common' && commonScope === 'whole' && parkingShare.applied && fields.common.ping) {
+    values.parking = multiply(fields.common.ping, parkingShare.fraction);
   }
   if (commonScope === 'unknown') {
     warnings.push('共有部分尚未確認為本戶面積或整體面積，不會推算本戶共有及相關合計。');
@@ -209,7 +224,7 @@ export function calculateAreas(input = {}) {
     }
   }
   const missingLabels = Object.entries(fields)
-    .filter(([, field]) => field.status === 'missing')
+    .filter(([fieldName, field]) => field.status === 'missing' && !(fieldName === 'parking' && parkingScope === 'common'))
     .map(([fieldName]) => AREA_LABELS[fieldName]);
   if (missingLabels.length) {
     warnings.push(`尚未提供${missingLabels.join('、')}；空白不視為 0，無法確定的結果會標示待確認。`);
@@ -227,12 +242,14 @@ export function calculateAreas(input = {}) {
     warnings,
     display,
     raw: {
-      version: 1,
+      version: 2,
       sqmToPing: { numerator: '121', denominator: '400' },
       fields: serializedFields,
       commonScope,
       commonIncludesParking,
+      parkingScope,
       share: { ...share, fraction: serializeRational(share.fraction) },
+      parkingShare: { ...parkingShare, fraction: serializeRational(parkingShare.fraction) },
       values: Object.fromEntries(Object.entries(values).map(([fieldName, value]) => [fieldName, serializeRational(value)])),
     },
   };
