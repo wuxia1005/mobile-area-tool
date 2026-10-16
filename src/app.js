@@ -215,6 +215,7 @@ async function chooseFile(file) {
     const metadata = await inspectDocument(file, { signal: state.controller.signal });
     if (generation !== state.generation) return;
     state.metadata = metadata;
+    state.transcript = element('transcript-mode').checked && ['image', 'pdf'].includes(metadata.kind);
     if (metadata.kind === 'image') { await readSelectedFile(); return; }
     element('selection-name').textContent = file.name;
     element('pdf-choice').hidden = metadata.kind !== 'pdf'; element('sheet-choice').hidden = metadata.kind !== 'excel';
