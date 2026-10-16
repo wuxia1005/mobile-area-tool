@@ -13,16 +13,16 @@
   <script src="./src/compat.js"></script>
   <script src="./vendor/xlsx.full.min.js" defer></script>
   <script src="./vendor/tesseract.min.js" defer></script>
-  <script src="./src/app.js" type="module"></script>
+  <script src="./src/app.js?v=3" type="module"></script>
 </head>
 <body>
   <div class="app">
-    <header><div><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version">謄本核對版</span></header>
+    <header><div><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version">面積加強版 3</span></header>
     <ol class="steps" aria-label="操作步驟"><li data-step="import" aria-current="step">① 選擇檔案</li><li data-step="review">② 核對資料</li><li data-step="result">③ 查看結果</li></ol>
     <main>
       <section data-screen="import">
         <h2>從 LINE 收到檔案？</h2><p class="muted">先存到 iPhone 的「檔案」或「照片」，再選取要換算的文件。</p>
-        <label class="check"><input id="transcript-mode" type="checkbox"><span>這是建物謄本：使用表格加強辨識與持分核對（PDF／圖片）</span></label>
+        <label class="check"><input id="transcript-mode" type="checkbox" checked><span>謄本／面積表加強辨識：自動讀取面積與持分，帶入後仍須核對（PDF／圖片）</span></label>
         <div class="imports"><button data-pick="pdf"><span class="file-type">PDF</span><span>選擇 PDF<small>逐頁辨識可見內容，每次最多 5 頁</small></span></button><button data-pick="image"><span class="file-type">圖片</span><span>選擇圖片<small>JPG、PNG、WebP；請保留清晰文字</small></span></button><button data-pick="excel"><span class="file-type">Excel</span><span>選擇 Excel<small>XLSX、XLS；先選工作表</small></span></button></div>
         <input id="file-input" type="file" hidden>
         <div class="note">不會讀取 LINE 聊天室，也不會把文件上傳。辨識時請保持此頁開啟，先勿鎖屏。</div>
@@ -31,13 +31,13 @@
       </section>
       <section id="selection" hidden>
         <h2>選擇要讀取的範圍</h2><p id="selection-name" class="muted"></p>
-        <div id="pdf-choice" hidden><label for="pdf-pages">PDF 頁碼（每次最多 5 頁）</label><input id="pdf-pages" type="text" inputmode="text" placeholder="例如 1 或 1-3,5"><p id="pdf-count" class="hint"></p></div>
+        <div id="pdf-choice" hidden><label class="check"><input id="pdf-auto" type="checkbox" checked><span>自動找建物標示頁（最多檢查 12 頁，不混用土地與他項權利）</span></label><label for="pdf-pages">手動 PDF 頁碼（關閉自動找頁後，每次最多 5 頁）</label><input id="pdf-pages" type="text" inputmode="text" placeholder="例如 1 或 1-3,5"><p id="pdf-count" class="hint"></p></div>
         <div id="sheet-choice" hidden><label for="excel-sheet">工作表</label><select id="excel-sheet"></select></div>
         <button id="start-read" class="primary full">讀取這個範圍</button><button id="cancel-selection" class="secondary full">取消</button>
       </section>
       <section id="processing" hidden aria-live="polite"><h2>正在手機內處理</h2><p id="progress-label"></p><progress id="progress" max="1" value="0"></progress><p class="hint">不會上傳文件。中文與掃描 PDF 可能較慢，請保持畫面開啟。</p><button id="cancel-read" class="secondary full">取消處理</button></section>
       <section data-screen="review" hidden>
-        <h2>確認這一戶的面積</h2><p id="source-name" class="muted source-name"></p>
+        <h2>確認這一戶的面積</h2><p id="source-name" class="muted source-name"></p><p class="note">已辨識的平方公尺會先帶入並換算坪數；請核對原圖。共有與車位持分仍須各自確認，缺資料不當作 0。</p>
         <div id="read-warnings" class="note" hidden></div>
         <details id="source-details"><summary>查看來源原圖與讀取文字</summary><div id="source-images"></div><div id="source-records" class="source-records"></div></details>
         <details id="transcript-panel"><summary>謄本專用核對：主建物、陽台與兩組持分</summary><p class="hint">主建物與陽台填本戶面積；共有部分填謄本的共有總面積，再分別輸入共有與車位的權利範圍。「100000 分之 300」表示分子 300、分母 100000。請特別核對小數點、分母零的個數與共有建號；不要把土地持分或停車位數帶入。</p><div id="transcript-candidates" class="note"></div><button id="apply-transcript" class="secondary full" disabled>帶入單一候選（覆蓋對應欄位，仍須核對）</button><button id="retry-transcript" class="secondary full" hidden>用謄本表格模式重新辨識（清除本次輸入）</button></details>
