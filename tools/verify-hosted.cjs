@@ -31,6 +31,46 @@ function deploymentUrl(argument) {
   return url;
 }
 
+async function assertSourceScreenshots(page, expectedCount) {
+  assert.equal(await page.locator('#read-warnings, #source-records').count(), 0);
+  const details = page.locator('#source-details');
+  assert.equal(await details.getAttribute('open'), null);
+  assert.equal((await details.locator(':scope > summary').textContent()).trim(), '查看來源截圖');
+  await details.locator(':scope > summary').click();
+  const imageCount = await page.locator('#source-images img').count();
+  assert.ok(imageCount > 0);
+  if (expectedCount !== undefined) assert.equal(imageCount, expectedCount);
+  await page.waitForFunction(() => [...document.querySelectorAll('#source-images img')].every(image => image.complete && image.naturalWidth > 0));
+  assert.equal((await page.locator('#source-images').textContent()).trim(), '');
+  assert.equal(await details.locator('pre, .source-row, p').count(), 0);
+  await details.locator(':scope > summary').click();
+}
+
+async function readExportedSource(page, output, name) {
+  await page.locator('#scope').selectOption('household');
+  await page.locator('#parking-scope').selectOption('household');
+  await page.locator('#inclusion').selectOption('included');
+  for (const [field, value] of Object.entries({ main: '70', accessory: '10', common: '50', parking: '20' })) {
+    await page.locator(`#field-${field}`).fill(value);
+    await page.locator(`[data-area-field="${field}"] .field-values select`).selectOption('sqm');
+  }
+  await page.locator('#confirmed').check();
+  await page.locator('#calculate').click();
+  await page.locator('#include-source').check();
+  const downloadEvent = page.waitForEvent('download');
+  await page.locator('#export').click();
+  const download = await downloadEvent;
+  const downloadPath = path.join(output, name);
+  await download.saveAs(downloadPath);
+  const bytes = [...await fs.readFile(downloadPath)];
+  const text = await page.evaluate(buffer => {
+    const workbook = globalThis.XLSX.read(new Uint8Array(buffer));
+    return JSON.stringify(globalThis.XLSX.utils.sheet_to_json(workbook.Sheets['原始讀取'], { header: 1 }));
+  }, bytes);
+  await page.locator('#edit').click();
+  return text;
+}
+
 async function main() {
   if (process.argv.includes('--help')) {
     console.log('用法：node tools/verify-hosted.cjs https://example.github.io/repository/');
@@ -54,7 +94,7 @@ async function main() {
   const { chromium } = playwrightRuntime();
   const executable = process.env.PLAYWRIGHT_BROWSER_EXECUTABLE;
   const browser = await chromium.launch({ headless: true, ...(executable ? { executablePath: executable } : { channel: 'msedge' }) });
-  const context = await browser.newContext({ viewport: { width: 390, height: 900 }, acceptDownloads: false, serviceWorkers: 'block' });
+  const context = await browser.newContext({ viewport: { width: 390, height: 900 }, acceptDownloads: true, serviceWorkers: 'block' });
   const pageErrors = [];
   const consoleErrors = [];
   const requests = [];
@@ -154,8 +194,9 @@ async function main() {
     await waitForReview();
     assert.equal(await page.locator('#field-main').inputValue(), '70');
     assert.equal(await page.locator('#field-parking').inputValue(), '20');
-    assert.ok(!(await page.locator('#source-records').textContent()).includes('SECRET'));
-    checks.push('本機合成 Excel 讀取與隱藏內容排除');
+    await assertSourceScreenshots(page);
+    assert.ok(!(await readExportedSource(page, output, 'excel-source-check.xlsx')).includes('SECRET'));
+    checks.push('合成 Excel 顯示可見儲存格截圖；匯出來源排除隱藏內容');
 
     await backToImport();
     await page.locator('#file-input').setInputFiles({ name: 'synthetic-transcript.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: fixtures.transcript });
@@ -168,6 +209,19 @@ async function main() {
     for (const id of ['confirmed', 'share-confirmed', 'parking-share-confirmed']) assert.equal(await page.locator(`#${id}`).isChecked(), false);
     assert.equal(await page.locator('#inclusion').inputValue(), 'unknown');
     assert.equal(await page.locator('#calculate').isDisabled(), true);
+    await assertSourceScreenshots(page);
+    const candidateSources = page.locator('#transcript-candidates details.candidate-source');
+    assert.equal(await candidateSources.count(), 5);
+    for (const candidate of await candidateSources.all()) {
+      await candidate.locator(':scope > summary').click();
+      await candidate.locator('img').first().waitFor({ state: 'attached' });
+      assert.ok(await candidate.locator('img').count() > 0);
+      await candidate.locator('img').first().evaluate(image => image.decode());
+      assert.equal(await candidate.locator('p, pre').count(), 0);
+      assert.equal((await candidate.textContent()).trim(), (await candidate.locator('summary').textContent()).trim());
+      await candidate.locator(':scope > summary').click();
+    }
+    checks.push('查看來源預設收合、展開只顯示截圖；五項候選來源圖可載入且沒有 OCR 說明文字');
     checks.push('單一謄本候選自動帶入，持分／車位關係與人工確認不自動勾選');
 
     await backToImport();
@@ -185,7 +239,8 @@ async function main() {
     await backToImport();
     await page.locator('#file-input').setInputFiles({ name: 'synthetic-area.png', mimeType: 'image/png', buffer: fixtures.image });
     await waitForReview();
-    const imageText = await page.locator('#source-records').textContent();
+    await assertSourceScreenshots(page, 1);
+    const imageText = await readExportedSource(page, output, 'image-source-check.xlsx');
     assert.match(imageText, /70/);
     assert.match(imageText, /20/);
     assert.equal(await page.locator('#source-images img').count(), 1);
@@ -201,7 +256,8 @@ async function main() {
     await page.locator('#pdf-pages').fill('1');
     await page.locator('#start-read').click();
     await waitForReview();
-    const pdfText = await page.locator('#source-records').textContent();
+    await assertSourceScreenshots(page, 1);
+    const pdfText = await readExportedSource(page, output, 'pdf-source-check.xlsx');
     assert.match(pdfText, /70/);
     assert.match(pdfText, /20/);
     assert.ok(!pdfText.includes('SECRET-HIDDEN'));
@@ -215,14 +271,14 @@ async function main() {
     await page.locator('#selection').waitFor({ state: 'visible', timeout: 60000 });
     assert.equal(await page.locator('#pdf-auto').isChecked(), true);
     await page.locator('#start-read').click(); await waitForReview();
-    assert.equal(await page.locator('#source-images img').count(), 1);
-    const transcriptPdfText = await page.locator('#source-records').textContent();
-    assert.match(transcriptPdfText, /第 2 頁/);
-    assert.ok(!transcriptPdfText.includes('700.00'));
-    assert.ok(!transcriptPdfText.includes('20000000'));
+    await assertSourceScreenshots(page, 1);
     assert.equal(await page.locator('#field-main').inputValue(), '60.00');
     for (const id of ['confirmed', 'share-confirmed', 'parking-share-confirmed']) assert.equal(await page.locator(`#${id}`).isChecked(), false);
     assert.equal(await page.locator('#calculate').isDisabled(), true);
+    const transcriptPdfText = await readExportedSource(page, output, 'transcript-pdf-source-check.xlsx');
+    assert.match(transcriptPdfText, /第 2 頁/);
+    assert.ok(!transcriptPdfText.includes('700.00'));
+    assert.ok(!transcriptPdfText.includes('20000000'));
     checks.push('自動找出唯一建物標示頁，不帶入土地與抵押權頁資料');
 
     await backToImport();
