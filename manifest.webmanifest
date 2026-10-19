@@ -1,1 +1,1 @@
-{"name":"房屋面積小工具","short_name":"房屋坪數","lang":"zh-Hant","start_url":"./","scope":"./","display":"standalone","background_color":"#f5f7f5","theme_color":"#216244","icons":[{"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}
+{"name":"房屋面積小工具","short_name":"房屋坪數","lang":"zh-Hant","start_url":"./","scope":"./","display":"standalone","background_color":"#f3f7f8","theme_color":"#007d7b","icons":[{"src":"./icon.svg?v=1.4","sizes":"any","type":"image/svg+xml","purpose":"any"}]}
