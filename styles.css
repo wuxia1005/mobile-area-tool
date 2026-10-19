@@ -94,7 +94,8 @@ select { text-overflow: ellipsis; }
 .result-panel { margin-top: 28px; padding-top: 24px; border-top: 2px solid var(--brand); scroll-margin-top: 20px; }
 .source-name { overflow-wrap: anywhere; margin-bottom: 14px; }
 .source-screenshot, #source-images img { display: block; width: 100%; height: auto; margin: 10px 0; background: #fff; border-radius: 6px; }
-.candidate-source { margin: 8px 0 14px; }
+.field-evidence { margin-top: 12px; min-width: 0; }
+.field-evidence .source-screenshot { margin: 0 0 8px; border: 1px solid var(--line); border-radius: 4px; }
 .check { display: flex; align-items: flex-start; gap: 10px; margin: 17px 0 8px; line-height: 1.75; font-weight: 400; }
 .check input { flex: 0 0 auto; margin-top: 3px; width: 22px; height: 22px; accent-color: var(--brand); }
 .feedback { margin: 16px 0; font-size: 13px; color: var(--muted); white-space: pre-line; line-height: 1.8; }
