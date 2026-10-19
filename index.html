@@ -8,16 +8,16 @@
   <meta name="description" content="在手機內讀取房屋面積文件，核對後換算坪數與公設比。文件不會上傳。">
   <link rel="manifest" href="./manifest.webmanifest?v=1.4">
   <link rel="icon" href="./icon.svg?v=1.4" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=1.6">
+  <link rel="stylesheet" href="./styles.css?v=1.7">
   <title>房屋面積小工具</title>
   <script src="./src/compat.js"></script>
   <script src="./vendor/xlsx.full.min.js" defer></script>
   <script src="./vendor/tesseract.min.js" defer></script>
-  <script src="./src/app.js?v=1.6" type="module"></script>
+  <script src="./src/app.js?v=1.7" type="module"></script>
 </head>
 <body>
   <div class="app">
-    <header><div><p class="eyebrow">手機辨識・坪數換算</p><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version" aria-label="版本 1.6">1.6</span></header>
+    <header><div><p class="eyebrow">手機辨識・坪數換算</p><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version" aria-label="版本 1.7">1.7</span></header>
     <ol class="steps" aria-label="操作步驟"><li data-step="import" aria-current="step"><button id="step-import" type="button"><span class="step-number">1</span><span>選擇檔案</span></button></li><li data-step="review"><span class="step-number">2</span><span>核對與結果</span></li></ol>
     <main>
       <section data-screen="import">
