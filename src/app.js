@@ -11,6 +11,9 @@ const settingIds = ['scope', 'inclusion', 'share-numerator', 'share-denominator'
 const element = id => document.getElementById(id);
 const progressLabels = { 'loading tesseract core': '載入辨識引擎', 'initializing tesseract': '初始化辨識引擎', 'loading language traineddata': '載入中英文模型', 'initializing api': '準備文字辨識', 'recognizing text': '正在辨識文字', 'loading tesseract': '載入文字辨識元件' };
 const state = { screen: 'import', file: null, metadata: null, document: null, extraction: { candidates: [], suggestions: {}, warnings: [] }, transcript: false, transcriptReading: null, settings: {}, fields: {}, history: [], imageUrls: [], pagePreviews: [], previewGeneration: 0, generation: 0, controller: null, confirmed: false, result: null };
+const sourceImageCache = new Map();
+const sourceRequests = new WeakMap();
+let sourceQueue = Promise.resolve();
 function clearFields() { state.fields = Object.fromEntries(fieldNames.map(name => [name, { value: '', unit: 'sqm', sourceId: '', originalValue: '', originalUnit: '' }])); }
 clearFields();
 function showScreen(screen) {
@@ -24,7 +27,7 @@ function showScreen(screen) {
 }
 function messageError(error) { element('global-error').textContent = error?.message || String(error); element('global-error').hidden = false; }
 function clearError() { element('global-error').hidden = true; element('global-error').textContent = ''; }
-function releaseImages() { state.previewGeneration += 1; for (const url of state.imageUrls) URL.revokeObjectURL(url); state.imageUrls = []; state.pagePreviews = []; element('source-images').replaceChildren(); element('source-details').open = false; }
+function releaseImages() { state.previewGeneration += 1; for (const url of state.imageUrls) URL.revokeObjectURL(url); sourceImageCache.clear(); state.imageUrls = []; state.pagePreviews = []; element('source-images').replaceChildren(); element('source-details').open = false; }
 function clearResults() {
   state.result = null; element('result-panel').hidden = true;
   document.querySelectorAll('[data-result]').forEach(output => output.replaceChildren());
@@ -85,20 +88,28 @@ function renderFieldControls() {
     input.addEventListener('input', () => { const previous = state.fields[name].value; state.fields[name].value = input.value; addHistory(name, previous, input.value, '人工修改數值'); if (name === 'common') revokeOwnershipConfirmation(); invalidate(); });
     unit.addEventListener('change', () => { const previous = state.fields[name].unit; state.fields[name].unit = unit.value; addHistory(name, previous, unit.value, '人工確認單位'); if (name === 'common') revokeOwnershipConfirmation(); invalidate(); });
     values.append(input, unit);
-    const source = document.createElement('select'); source.className = 'field-source'; source.dataset.sourceField = name; source.setAttribute('aria-label', `${fieldLabels[name]}來源候選`); source.add(new Option('手動輸入／不指定來源', ''));
-    for (const candidate of state.extraction.candidates.filter(candidate => candidate.field === name || candidate.field === 'unknown')) {
-      source.add(new Option(`${candidate.value} ${candidate.unit === 'sqm' ? '㎡' : candidate.unit === 'ping' ? '坪' : '單位待確認'} · ${candidate.source}`, candidate.id));
+    const available = state.transcriptReading?.available[name];
+    const candidates = state.transcriptReading?.detected && ['main', 'accessory', 'common'].includes(name)
+      ? available ? [available] : state.transcriptReading.candidates.filter(candidate => candidate.field === name)
+      : state.extraction.candidates.filter(candidate => candidate.field === name || candidate.field === 'unknown');
+    const source = document.createElement('select'); source.className = 'field-source'; source.dataset.sourceField = name; source.setAttribute('aria-label', `${fieldLabels[name]}來源候選`); source.add(new Option('選擇來源／手動輸入', ''));
+    for (const [index, candidate] of candidates.entries()) {
+      source.add(new Option(`候選 ${index + 1}：${candidate.value} ${candidate.unit === 'sqm' ? '㎡' : candidate.unit === 'ping' ? '坪' : '單位待確認'}`, candidate.id));
     }
     source.value = state.fields[name].sourceId;
+    source.hidden = !candidates.length || candidates.length === 1 && source.value === candidates[0].id;
+    const evidence = document.createElement('div'); evidence.className = 'field-evidence'; evidence.dataset.sourceField = name;
     source.addEventListener('change', () => {
-      const candidate = state.extraction.candidates.find(candidate => candidate.id === source.value);
+      const candidate = candidates.find(candidate => candidate.id === source.value);
       const previous = { ...state.fields[name] };
       state.fields[name].sourceId = source.value;
       if (candidate) Object.assign(state.fields[name], { value: candidate.value, unit: candidate.unit, originalValue: candidate.value, originalUnit: candidate.unit });
       addHistory(name, previous, { ...state.fields[name] }, '選取來源候選');
       input.value = state.fields[name].value; unit.value = state.fields[name].unit; if (name === 'common') revokeOwnershipConfirmation(); invalidate();
+      renderInlineSource(evidence, candidate);
     });
-    wrapper.append(heading, values, source); container.append(wrapper);
+    wrapper.append(heading, values, source, evidence); container.append(wrapper);
+    renderInlineSource(evidence, candidates.find(candidate => candidate.id === source.value));
   });
 }
 function resetDocument(file) {
@@ -114,24 +125,13 @@ function resetDocument(file) {
 }
 function renderTranscript() {
   const reading = state.transcriptReading;
-  const panel = element('transcript-candidates'); panel.replaceChildren();
-  element('transcript-panel').open = state.transcript || Boolean(reading?.detected);
-  if (!reading) panel.textContent = '尚無謄本候選。讀取後可在此核對；也可直接在下方手動輸入。';
-  else {
-    for (const [field, label] of Object.entries({ main: '主建物', accessory: '附屬建物／陽台', common: '共有總面積', commonShare: '共有持分', parkingShare: '車位持分' })) {
-      const candidate = reading.available[field];
-      const row = document.createElement('p');
-      row.textContent = `${label}：${candidate ? candidate.numerator ? `${candidate.numerator}／${candidate.denominator}` : `${candidate.value} ${candidate.unit === 'sqm' ? '㎡' : '坪'}` : '未讀出或有多筆，請對照原圖手填'}`;
-      panel.append(row);
-      if (candidate) {
-        const evidence = document.createElement('details'); evidence.className = 'candidate-source'; evidence.dataset.sourceField = field;
-        const summary = document.createElement('summary'); summary.textContent = '查看來源截圖'; evidence.append(summary); panel.append(evidence);
-        const previewGeneration = state.previewGeneration;
-        evidence.addEventListener('toggle', () => { if (evidence.open && !evidence.dataset.loaded) renderCandidateSource(evidence, candidate, previewGeneration); });
-      }
-    }
-    const warnings = document.createElement('p'); warnings.textContent = reading.warnings.join('\n'); panel.append(warnings);
-  }
+  const panel = element('transcript-candidates');
+  panel.textContent = reading && (state.transcript || reading.detected) ? reading.warnings.join('\n') : '';
+  panel.hidden = !panel.textContent;
+  element('transcript-panel').open = false;
+  element('transcript-panel').hidden = !state.file;
+  renderInlineSource(element('common-share-source'), reading?.available.commonShare);
+  renderInlineSource(element('parking-share-source'), reading?.available.parkingShare);
   element('apply-transcript').disabled = !reading || !Object.keys(reading.available).length;
   element('retry-transcript').hidden = !state.file || !['pdf', 'image'].includes(state.metadata?.kind);
 }
@@ -162,33 +162,66 @@ function applyTranscript() {
   element('inclusion').value = 'unknown';
   renderFieldControls(); invalidate();
 }
-function appendSourceImage(container, url, label) {
-  const image = document.createElement('img'); image.className = 'source-screenshot'; image.src = url; image.alt = label; image.loading = 'lazy'; container.append(image);
+function appendSourceImage(container, url, label, loading = 'lazy') {
+  const image = document.createElement('img'); image.className = 'source-screenshot'; image.src = url; image.alt = label; image.loading = loading; container.append(image);
 }
-async function renderCandidateSource(container, candidate, previewGeneration) {
+function renderInlineSource(container, candidate) {
+  const request = {};
+  sourceRequests.set(container, request);
+  container.dataset.sourceId = candidate?.id || '';
+  container.replaceChildren(); container.hidden = !candidate || !state.pagePreviews.length;
+  container.removeAttribute('data-loaded'); container.removeAttribute('aria-busy');
+  if (container.hidden) return;
+  const previewGeneration = state.previewGeneration;
+  sourceQueue = sourceQueue.catch(() => {}).then(async () => {
+    if (previewGeneration !== state.previewGeneration || sourceRequests.get(container) !== request || !container.isConnected) return;
+    await renderCandidateSource(container, candidate, previewGeneration, request);
+  }).catch(() => { if (sourceRequests.get(container) === request) { container.hidden = true; container.removeAttribute('aria-busy'); } });
+}
+async function renderCandidateSource(container, candidate, previewGeneration, request) {
+  const current = () => previewGeneration === state.previewGeneration && sourceRequests.get(container) === request && container.isConnected;
   container.dataset.loaded = 'pending'; container.setAttribute('aria-busy', 'true');
   const allRecords = state.document?.records || [];
   const records = allRecords.filter(record => record.source && candidate.source.includes(record.source));
   const matching = state.pagePreviews.filter(preview => preview.source && candidate.source.includes(preview.source));
   const previews = matching.length ? matching : state.pagePreviews;
+  const label = `${candidate.label || fieldLabels[candidate.field] || '原始文件'}來源截圖`;
   try {
+    if (state.document?.kind === 'excel' && records.length) {
+      const key = `excel\n${previews[0]?.url}\n${candidate.source}`;
+      let urls = sourceImageCache.get(key);
+      if (!urls) {
+        const blobs = await createExcelScreenshots(records);
+        if (previewGeneration !== state.previewGeneration) return;
+        urls = blobs.map(blob => { const url = URL.createObjectURL(blob); state.imageUrls.push(url); return url; });
+        sourceImageCache.set(key, urls);
+      }
+      if (!current()) return;
+      for (const url of urls) appendSourceImage(container, url, label, 'eager');
+      container.dataset.loaded = 'true'; return;
+    }
     for (const preview of previews) {
+      if (!current()) return;
       let url = preview.url;
       if (preview.kind !== 'excel') {
+        const key = `${preview.url}\n${candidate.source}`;
         try {
-          const pageRecords = records.filter(record => (record.pageNumber ?? 1) === preview.pageNumber);
-          const blob = await createSourceScreenshot(preview, pageRecords);
-          if (previewGeneration !== state.previewGeneration) return;
-          url = URL.createObjectURL(blob); state.imageUrls.push(url);
+          if (sourceImageCache.has(key)) url = sourceImageCache.get(key);
+          else {
+            const pageRecords = records.filter(record => (record.pageNumber ?? 1) === preview.pageNumber);
+            const blob = await createSourceScreenshot(preview, pageRecords);
+            if (previewGeneration !== state.previewGeneration) return;
+            url = URL.createObjectURL(blob); state.imageUrls.push(url); sourceImageCache.set(key, url);
+          }
         } catch {
-          if (previewGeneration !== state.previewGeneration) return;
+          if (!current()) return;
         }
       }
-      if (previewGeneration !== state.previewGeneration) return;
-      appendSourceImage(container, url, `${candidate.label}來源截圖`);
+      if (!current()) return;
+      appendSourceImage(container, url, label, 'eager');
     }
     container.dataset.loaded = 'true';
-  } finally { container.removeAttribute('aria-busy'); }
+  } finally { if (sourceRequests.get(container) === request) container.removeAttribute('aria-busy'); }
 }
 async function renderSources(generation) {
   if (state.document?.kind === 'excel') {
