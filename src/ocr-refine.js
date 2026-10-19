@@ -91,7 +91,10 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
       checkAbort(options);
       if (attempts + 2 > 12) break;
       const text = compact(record.text);
-      if (!/陽台|附屬建物用途|總面積|層次面積/u.test(text) || !/\d/u.test(text) || decimalAreas(record.text).length) continue;
+      const ownershipArea = /權利範圍/u.test(text) && /面積/u.test(text) && !/土地|基地|地號/u.test(text);
+      const labeledArea = /陽台|附屬建物用途|總面積|層次面積/u.test(text)
+        || ownershipArea;
+      if (!labeledArea || decimalAreas(record.text).length) continue;
       const height = record.bbox.y1 - record.bbox.y0;
       const box = { left: 0, top: record.bbox.y0 - height * 0.2, width: canvas.width, height: height * 1.4 };
       announce('面積小數點');
@@ -100,15 +103,25 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
       const enlarged = await recognizeCrop(canvas, box, 3, '7', undefined, ocr, options);
       const binaryAreas = decimalAreas(binary.text);
       const enlargedAreas = decimalAreas(enlarged.text);
+      const readings = [binary, enlarged];
       const agreement = binaryAreas.find(value => enlargedAreas.includes(value));
       let selected = agreement;
       let reading = enlargedAreas.includes(selected) ? enlarged : binary;
       if (!selected && attempts < 12) {
         announce('面積數值欄位');
         const valueColumn = await recognizeCrop(canvas, { ...box, left: canvas.width * 0.53, width: canvas.width * 0.42 }, 3, '7', undefined, ocr, options);
+        readings.push(valueColumn);
         const columnAreas = decimalAreas(valueColumn.text);
         selected = columnAreas.find(value => binaryAreas.includes(value) || enlargedAreas.includes(value));
         if (selected) reading = enlargedAreas.includes(selected) ? enlarged : binary;
+      }
+      if (selected && ownershipArea) {
+        const signature = value => fractions(value).map(fraction => `${fraction[2]}/${fraction[1]}`).join('|');
+        const originalShares = fractions(record.text);
+        const matching = readings.filter(item => /權利範圍/u.test(compact(item.text)) && decimalAreas(item.text).includes(selected)
+          && fractions(item.text).length <= 1 && (!originalShares.length || signature(item.text) === signature(record.text)));
+        reading = matching.find(item => matching.filter(other => signature(other.text) === signature(item.text)).length >= 2);
+        if (!reading) continue;
       }
       if (selected) {
         updateRecord(record, reading.text.replace(/\r?\n/gu, ' '), '面積小數點局部重讀', reading.confidence);
@@ -153,6 +166,13 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
       const nearby = geometric.slice(Math.max(0, index - 3), index + 2).map(item => item.text).join(' ');
       const parkingContext = /車位|還位|地下[一二三四五六七八九十\d]+層/u.test(compact(nearby));
       let replacement = selected.line;
+      if (/權利範圍/u.test(compact(record.text))) {
+        if (!/權利範圍/u.test(compact(replacement))) replacement = `權利範圍 ${replacement}`;
+        const originalAreas = decimalAreas(record.text);
+        const replacementAreas = decimalAreas(replacement);
+        if (originalAreas.length > 1 || replacementAreas.length > 1 || originalAreas.length && replacementAreas.length && originalAreas[0] !== replacementAreas[0]) continue;
+        if (originalAreas.length === 1 && !replacementAreas.length) replacement = `${replacement} 面積${originalAreas[0]}平方公尺`;
+      }
       if (parkingContext && !/含停車位|停車位權利範圍/u.test(compact(replacement))) {
         if (attempts >= 12) continue;
         const labelBox = { left: contentLeft, top: record.bbox.y0 - height * 1.2, width: Math.max(1, canvas.width * 0.29 - contentLeft), height: height * 2 };
