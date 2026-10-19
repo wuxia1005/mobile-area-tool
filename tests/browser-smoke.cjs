@@ -7,6 +7,44 @@ const { chromium } = require(path.join(runtimeModules, 'playwright'));
 const { PDFDocument, StandardFonts, rgb } = require(path.join(runtimeModules, 'pdf-lib'));
 const { createRequire } = require('node:module');
 
+async function assertSourceScreenshots(page, expectedCount) {
+  assert.equal(await page.locator('#read-warnings, #source-records').count(), 0);
+  const details = page.locator('#source-details');
+  assert.equal(await details.getAttribute('open'), null);
+  assert.equal((await details.locator(':scope > summary').textContent()).trim(), '查看來源截圖');
+  await details.locator(':scope > summary').click();
+  const images = page.locator('#source-images img');
+  const imageCount = await images.count();
+  assert.ok(imageCount > 0);
+  if (expectedCount !== undefined) assert.equal(imageCount, expectedCount);
+  await page.waitForFunction(() => [...document.querySelectorAll('#source-images img')].every(image => image.complete && image.naturalWidth > 0));
+  assert.equal((await page.locator('#source-images').textContent()).trim(), '');
+  assert.equal(await details.locator('pre, .source-row, p').count(), 0);
+  await details.locator(':scope > summary').click();
+}
+
+async function readExportedSource(page, output, name, XLSX) {
+  await page.locator('#scope').selectOption('household');
+  await page.locator('#parking-scope').selectOption('household');
+  await page.locator('#inclusion').selectOption('included');
+  for (const [field, value] of Object.entries({ main: '70', accessory: '10', common: '50', parking: '20' })) {
+    await page.locator(`#field-${field}`).fill(value);
+    await page.locator(`[data-area-field="${field}"] .field-values select`).selectOption('sqm');
+  }
+  await page.locator('#confirmed').check();
+  await page.locator('#calculate').click();
+  await page.locator('#include-source').check();
+  const downloadEvent = page.waitForEvent('download');
+  await page.locator('#export').click();
+  const download = await downloadEvent;
+  const downloadPath = path.join(output, name);
+  await download.saveAs(downloadPath);
+  const workbook = XLSX.read(new Uint8Array(await fs.readFile(downloadPath)));
+  const text = JSON.stringify(XLSX.utils.sheet_to_json(workbook.Sheets['原始讀取'], { header: 1 }));
+  await page.locator('#edit').click();
+  return text;
+}
+
 (async () => {
   const directory = path.resolve(__dirname, '..');
   const output = path.join(directory, 'test-results');
@@ -57,9 +95,10 @@ const { createRequire } = require('node:module');
     await page.locator('#selection').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#excel-sheet option').count(), 1);
     await page.locator('#start-read').click(); await page.locator('[data-screen="review"]').waitFor({ state: 'visible' });
-    assert.ok(!(await page.locator('#source-records').textContent()).includes('SECRET'));
     assert.equal(await page.locator('#field-main').inputValue(), '70');
     assert.equal(await page.locator('#field-parking').inputValue(), '20');
+    await assertSourceScreenshots(page);
+    assert.ok(!(await readExportedSource(page, output, 'excel-source-check.xlsx', XLSX)).includes('SECRET'));
     await page.screenshot({ path: path.join(output, 'excel-review-phone.png'), fullPage: true });
     const imageData = await page.evaluate(() => {
       const canvas = document.createElement('canvas'); canvas.width = 1500; canvas.height = 650;
@@ -70,7 +109,8 @@ const { createRequire } = require('node:module');
     const imageBytes = Buffer.from(imageData.split(',')[1], 'base64'); const imagePath = path.join(output, 'synthetic-area.png'); await fs.writeFile(imagePath, imageBytes);
     await page.locator('#back-import').click(); await page.locator('#file-input').setInputFiles(imagePath);
     await page.locator('[data-screen="review"]').waitFor({ state: 'visible', timeout: 180000 });
-    const imageRead = await page.locator('#source-records').textContent();
+    await assertSourceScreenshots(page, 1);
+    const imageRead = await readExportedSource(page, output, 'image-source-check.xlsx', XLSX);
     assert.match(imageRead, /70[.,]00|70/); assert.match(imageRead, /20[.,]00|20/);
     await page.screenshot({ path: path.join(output, 'image-review-phone.png'), fullPage: true });
     const pdf = await PDFDocument.create(); const png = await pdf.embedPng(imageBytes); const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -87,7 +127,8 @@ const { createRequire } = require('node:module');
     assert.equal(await page.locator('#pdf-pages').inputValue(), '');
     await page.locator('#pdf-pages').fill('1-6'); await page.locator('#start-read').click(); assert.match(await page.locator('#global-error').textContent(), /最多 5 頁/);
     await page.locator('#pdf-pages').fill('1'); await page.locator('#start-read').click(); await page.locator('[data-screen="review"]').waitFor({ state: 'visible', timeout: 180000 });
-    const pdfRead = await page.locator('#source-records').textContent(); assert.match(pdfRead, /70/); assert.ok(!pdfRead.includes('SECRET-HIDDEN')); assert.ok(!pdfRead.includes('9999'));
+    await assertSourceScreenshots(page, 1);
+    const pdfRead = await readExportedSource(page, output, 'pdf-source-check.xlsx', XLSX); assert.match(pdfRead, /70/); assert.ok(!pdfRead.includes('SECRET-HIDDEN')); assert.ok(!pdfRead.includes('9999'));
     await page.screenshot({ path: path.join(output, 'pdf-review-phone.png'), fullPage: true });
     const transcriptPageImages = await page.evaluate(() => [
       ['SYNTHETIC LAND - NOT REAL DATA', '土地標示部', '面積700.00平方公尺', '土地所有權部', '權利範圍10000分之999'],
@@ -110,15 +151,16 @@ const { createRequire } = require('node:module');
     assert.equal(await page.locator('#pdf-auto').isChecked(), true);
     await page.locator('#start-read').click();
     await page.locator('[data-screen="review"]').waitFor({ state: 'visible', timeout: 240000 });
-    assert.equal(await page.locator('#source-images img').count(), 1);
-    assert.match(await page.locator('#source-records').textContent(), /第 2 頁/);
-    assert.ok(!(await page.locator('#source-records').textContent()).includes('700.00'));
-    assert.ok(!(await page.locator('#source-records').textContent()).includes('20000000'));
+    await assertSourceScreenshots(page, 1);
     assert.equal(await page.locator('#field-main').inputValue(), '60.00');
     assert.equal(await page.locator('#confirmed').isChecked(), false);
     assert.equal(await page.locator('#share-confirmed').isChecked(), false);
     assert.equal(await page.locator('#parking-share-confirmed').isChecked(), false);
     assert.equal(await page.locator('#calculate').isDisabled(), true);
+    const transcriptPdfRead = await readExportedSource(page, output, 'transcript-pdf-source-check.xlsx', XLSX);
+    assert.match(transcriptPdfRead, /第 2 頁/);
+    assert.ok(!transcriptPdfRead.includes('700.00'));
+    assert.ok(!transcriptPdfRead.includes('20000000'));
     const multiplePdf = await PDFDocument.create();
     const multipleImage = await multiplePdf.embedPng(Buffer.from(transcriptPageImages[1].split(',')[1], 'base64'));
     for (let index = 0; index < 2; index += 1) multiplePdf.addPage([750, 650]).drawImage(multipleImage, { x: 0, y: 0, width: 750, height: 650 });
@@ -150,7 +192,7 @@ const { createRequire } = require('node:module');
     assert.equal(await page.locator('#share-numerator').inputValue(), '600');
     assert.equal(await page.locator('#parking-share-numerator').inputValue(), '300');
     assert.equal(await page.locator('#confirmed').isChecked(), false);
-    await page.locator('#transcript-panel > summary').click();
+    if (await page.locator('#transcript-panel').getAttribute('open') === null) await page.locator('#transcript-panel > summary').click();
     const transcriptText = await page.locator('#transcript-candidates').textContent();
     assert.match(transcriptText, /共有持分：600／100000/); assert.match(transcriptText, /車位持分：300／100000/);
     assert.equal(await page.locator('#field-main').inputValue(), '60.00');
@@ -160,6 +202,18 @@ const { createRequire } = require('node:module');
     assert.equal(await page.locator('#parking-share-confirmed').isChecked(), false);
     assert.equal(await page.locator('#inclusion').inputValue(), 'unknown');
     assert.equal(await page.locator('#calculate').isDisabled(), true);
+    await assertSourceScreenshots(page);
+    const candidateSources = page.locator('#transcript-candidates details.candidate-source');
+    assert.equal(await candidateSources.count(), 5);
+    for (const candidate of await candidateSources.all()) {
+      await candidate.locator(':scope > summary').click();
+      await candidate.locator('img').first().waitFor({ state: 'attached' });
+      assert.ok(await candidate.locator('img').count() > 0);
+      await candidate.locator('img').first().evaluate(image => image.decode());
+      assert.equal(await candidate.locator('p, pre').count(), 0);
+      assert.equal((await candidate.textContent()).trim(), (await candidate.locator('summary').textContent()).trim());
+      await candidate.locator(':scope > summary').click();
+    }
     await page.locator('#share-confirmed').check(); await page.locator('#parking-share-confirmed').check();
     await page.locator('#inclusion').selectOption('included'); await page.locator('#confirmed').check();
     for (const width of [320, 390, 736]) { await page.setViewportSize({ width, height: 900 }); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false); }
@@ -204,6 +258,6 @@ const { createRequire } = require('node:module');
     assert.equal(await page.locator('#parking-scope').inputValue(), 'household');
     assert.equal(await page.locator('#parking-share-numerator').inputValue(), '');
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ result: 'passed', checks: ['enhanced OCR enabled by default', 'manual calculation', 'real xlsx export', 'real Excel import', 'hidden rows and sheets excluded', 'real image OCR', 'visible PDF OCR', 'covered PDF text excluded', 'explicit PDF range selection with auto opt-out', 'automatic unique building page selection excludes land and mortgage', 'multiple building PDF returns to manual selection', 'unique transcript candidates prefilled without confirmation', 'ambiguous transcripts blocked without mixed ownership', 'independent common and parking ownership', 'ownership included in Excel export', 'changed ownership invalidates confirmation', 'no off-site requests', 'responsive widths', 'dark mode', 'no page errors'], output }));
+    console.log(JSON.stringify({ result: 'passed', checks: ['enhanced OCR enabled by default', 'manual calculation', 'real xlsx export', 'real Excel import', 'hidden rows and sheets excluded from exported source', 'image-only source previews for Excel/images/PDF', 'candidate source screenshots without OCR prose', 'real image OCR', 'visible PDF OCR', 'covered PDF text excluded from exported source', 'explicit PDF range selection with auto opt-out', 'automatic unique building page selection excludes land and mortgage', 'multiple building PDF returns to manual selection', 'unique transcript candidates prefilled without confirmation', 'ambiguous transcripts blocked without mixed ownership', 'independent common and parking ownership', 'ownership included in Excel export', 'changed ownership invalidates confirmation', 'no off-site requests', 'responsive widths', 'dark mode', 'no page errors'], output }));
   } finally { await browser.close(); }
 })().catch(error => { process.stderr.write(error.stack || String(error)); process.exitCode = 1; });
