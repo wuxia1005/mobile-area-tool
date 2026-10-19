@@ -73,6 +73,9 @@ async function readExportedSource(page, output, name, XLSX) {
     await page.locator('#scope').selectOption('household'); await page.locator('#inclusion').selectOption('included'); await page.locator('#confirmed').check(); await page.locator('#calculate').click();
     assert.equal(await page.locator('[data-result="without"]').textContent(), '33.28 坪');
     assert.equal(await page.locator('[data-result="ratio"]').textContent(), '27.27%');
+    assert.equal(await page.locator('[data-screen="review"]').isVisible(), true);
+    assert.equal(await page.locator('[data-screen="review"] #result-panel').isVisible(), true);
+    assert.equal(await page.locator('#field-main').isVisible(), true);
     await page.screenshot({ path: path.join(output, 'results-phone.png'), fullPage: true });
     const privateDownloadEvent = page.waitForEvent('download'); await page.locator('#export').click(); const privateDownload = await privateDownloadEvent;
     const privatePath = path.join(output, 'summary-only.xlsx'); await privateDownload.saveAs(privatePath);
