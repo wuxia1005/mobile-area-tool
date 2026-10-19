@@ -16,7 +16,7 @@ function playwrightRuntime() {
   const deployment = process.argv[2] || 'http://127.0.0.1:4173/';
   const origin = new URL(deployment).origin;
   const directory = path.resolve(__dirname, '..');
-  const output = path.join(directory, 'test-results', 'ui-1.6');
+  const output = path.join(directory, 'test-results', 'ui-1.7');
   await fs.mkdir(output, { recursive: true });
   const browser = await chromium.launch({ headless: true, channel: 'msedge' });
   try {
@@ -32,7 +32,7 @@ function playwrightRuntime() {
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(deployment);
-    assert.equal((await page.locator('.version').textContent()).trim(), '1.6');
+    assert.equal((await page.locator('.version').textContent()).trim(), '1.7');
     assert.equal(await page.locator('.steps li').count(), 2);
     assert.match(await page.locator('[data-step="review"]').textContent(), /核對與結果/);
     assert.equal(await page.locator('[data-screen="result"]').count(), 0);
@@ -145,7 +145,7 @@ function playwrightRuntime() {
     await assertCleared();
     assert.deepEqual(requests, []);
     assert.deepEqual(errors, []);
-    const report = { deployment, checkedAt: new Date().toISOString(), result: 'passed', design: 'A 經典金融・同頁核對與結果', layout, checks: ['version 1.6', 'two-step navigation', 'review and results share one page', 'result heading receives focus without leaving review', 'return to fields preserves a valid result until editing', 'unchecking confirmation clears results and summary', 'reconfirmation requires a fresh calculation', 'area and relationship edits clear results and disable sharing', 'classic white vertical result layout', 'small units preserve exact result text', 'keyboard import navigation', 'result to import invalidates confirmation', 'range selection to import', 'processing cancellation via header', 'large result fonts', 'light and dark responsive layout', 'no off-origin requests or uploads', 'no page errors'] };
+    const report = { deployment, checkedAt: new Date().toISOString(), result: 'passed', design: 'A 經典金融・同頁核對與結果', layout, checks: ['version 1.7', 'two-step navigation', 'review and results share one page', 'result heading receives focus without leaving review', 'return to fields preserves a valid result until editing', 'unchecking confirmation clears results and summary', 'reconfirmation requires a fresh calculation', 'area and relationship edits clear results and disable sharing', 'classic white vertical result layout', 'small units preserve exact result text', 'keyboard import navigation', 'result to import invalidates confirmation', 'range selection to import', 'processing cancellation via header', 'large result fonts', 'light and dark responsive layout', 'no off-origin requests or uploads', 'no page errors'] };
     await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
   } finally { await browser.close(); }
