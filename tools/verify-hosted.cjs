@@ -214,18 +214,18 @@ async function main() {
     assert.equal(await page.locator('#inclusion').inputValue(), 'unknown');
     assert.equal(await page.locator('#calculate').isDisabled(), true);
     await assertSourceScreenshots(page);
-    const candidateSources = page.locator('#transcript-candidates details.candidate-source');
+    const candidateSources = page.locator('.field-evidence:not([hidden])');
     assert.equal(await candidateSources.count(), 5);
+    assert.equal(await page.locator('#transcript-candidates .candidate-source').count(), 0);
+    for (const field of ['main', 'accessory', 'common']) assert.equal(await page.locator(`[data-source-field="${field}"].field-source`).isVisible(), false);
     for (const candidate of await candidateSources.all()) {
-      await candidate.locator(':scope > summary').click();
       await candidate.locator('img').first().waitFor({ state: 'attached' });
       assert.ok(await candidate.locator('img').count() > 0);
       await candidate.locator('img').first().evaluate(image => image.decode());
-      assert.equal(await candidate.locator('p, pre').count(), 0);
-      assert.equal((await candidate.textContent()).trim(), (await candidate.locator('summary').textContent()).trim());
-      await candidate.locator(':scope > summary').click();
+      assert.equal(await candidate.locator('p, pre, summary, select').count(), 0);
+      assert.equal((await candidate.textContent()).trim(), '');
     }
-    checks.push('查看來源預設收合、展開只顯示截圖；五項候選來源圖可載入且沒有 OCR 說明文字');
+    checks.push('五項來源截圖直接放在各自輸入處，沒有重複候選卡或長檔名來源文字；完整來源仍可展開');
     checks.push('單一謄本候選自動帶入，持分／車位關係與人工確認不自動勾選');
 
     await backToImport();
