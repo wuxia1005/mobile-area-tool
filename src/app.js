@@ -2,6 +2,7 @@ import { calculateAreas } from './core.js?v=3';
 import { extractCandidates } from './extract.js?v=3';
 import { inspectDocument, readDocument } from './readers.js?v=3';
 import { extractTranscript } from './transcript.js?v=3';
+import { createSourceScreenshot, createExcelScreenshots } from './source-screenshots.js?v=4';
 
 const fieldNames = ['main', 'accessory', 'common', 'parking'];
 const fieldLabels = { main: '主建物', accessory: '附屬建物', common: '共有部分', parking: '車位面積' };
@@ -9,7 +10,7 @@ const resultLabels = { without: '總坪數（不含車位）', with: '總坪數�
 const settingIds = ['scope', 'inclusion', 'share-numerator', 'share-denominator', 'share-confirmed', 'parking-scope', 'parking-share-numerator', 'parking-share-denominator', 'parking-share-confirmed'];
 const element = id => document.getElementById(id);
 const progressLabels = { 'loading tesseract core': '載入辨識引擎', 'initializing tesseract': '初始化辨識引擎', 'loading language traineddata': '載入中英文模型', 'initializing api': '準備文字辨識', 'recognizing text': '正在辨識文字', 'loading tesseract': '載入文字辨識元件' };
-const state = { screen: 'import', file: null, metadata: null, document: null, extraction: { candidates: [], suggestions: {}, warnings: [] }, transcript: false, transcriptReading: null, settings: {}, fields: {}, history: [], imageUrls: [], generation: 0, controller: null, confirmed: false, result: null };
+const state = { screen: 'import', file: null, metadata: null, document: null, extraction: { candidates: [], suggestions: {}, warnings: [] }, transcript: false, transcriptReading: null, settings: {}, fields: {}, history: [], imageUrls: [], pagePreviews: [], previewGeneration: 0, generation: 0, controller: null, confirmed: false, result: null };
 function clearFields() { state.fields = Object.fromEntries(fieldNames.map(name => [name, { value: '', unit: 'sqm', sourceId: '', originalValue: '', originalUnit: '' }])); }
 clearFields();
 function showScreen(screen) {
@@ -22,7 +23,7 @@ function showScreen(screen) {
 }
 function messageError(error) { element('global-error').textContent = error?.message || String(error); element('global-error').hidden = false; }
 function clearError() { element('global-error').hidden = true; element('global-error').textContent = ''; }
-function releaseImages() { for (const url of state.imageUrls) URL.revokeObjectURL(url); state.imageUrls = []; element('source-images').replaceChildren(); }
+function releaseImages() { state.previewGeneration += 1; for (const url of state.imageUrls) URL.revokeObjectURL(url); state.imageUrls = []; state.pagePreviews = []; element('source-images').replaceChildren(); element('source-details').open = false; }
 function invalidate() { state.confirmed = false; state.result = null; element('confirmed').checked = false; element('action-status').textContent = ''; updateCalculation(); }
 function revokeOwnershipConfirmation(common = true) {
   for (const id of common ? ['share-confirmed', 'parking-share-confirmed'] : ['parking-share-confirmed']) {
@@ -93,7 +94,7 @@ function resetDocument(file) {
   element('scope').value = 'unknown'; element('inclusion').value = 'unknown'; element('share-numerator').value = ''; element('share-denominator').value = ''; element('share-confirmed').checked = false; element('confirmed').checked = false;
   element('parking-scope').value = 'household'; element('parking-share-numerator').value = ''; element('parking-share-denominator').value = ''; element('parking-share-confirmed').checked = false;
   element('include-source').checked = false;
-  element('read-warnings').hidden = true; element('source-records').replaceChildren();
+  element('source-details').hidden = !file;
   element('source-name').textContent = file?.name || '手動輸入，未讀取文件';
   renderFieldControls(); renderTranscript(); updateCalculation();
 }
@@ -109,8 +110,10 @@ function renderTranscript() {
       row.textContent = `${label}：${candidate ? candidate.numerator ? `${candidate.numerator}／${candidate.denominator}` : `${candidate.value} ${candidate.unit === 'sqm' ? '㎡' : '坪'}` : '未讀出或有多筆，請對照原圖手填'}`;
       panel.append(row);
       if (candidate) {
-        const evidence = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = '查看候選來源';
-        const text = document.createElement('p'); text.textContent = `${candidate.source}\n${candidate.text}`; evidence.append(summary, text); panel.append(evidence);
+        const evidence = document.createElement('details'); evidence.className = 'candidate-source'; evidence.dataset.sourceField = field;
+        const summary = document.createElement('summary'); summary.textContent = '查看來源截圖'; evidence.append(summary); panel.append(evidence);
+        const previewGeneration = state.previewGeneration;
+        evidence.addEventListener('toggle', () => { if (evidence.open && !evidence.dataset.loaded) renderCandidateSource(evidence, candidate, previewGeneration); });
       }
     }
     const warnings = document.createElement('p'); warnings.textContent = reading.warnings.join('\n'); panel.append(warnings);
@@ -145,20 +148,46 @@ function applyTranscript() {
   element('inclusion').value = 'unknown';
   renderFieldControls(); invalidate();
 }
-function renderSources() {
-  const container = element('source-records'); container.replaceChildren();
-  const records = state.document?.records || [];
-  for (const record of records.slice(0, 500)) {
-    const row = document.createElement('div'); row.className = 'source-row';
-    const caption = document.createElement('small'); caption.textContent = record.source;
-    const text = document.createElement('div'); text.textContent = record.originalText ? `${record.text}\n【局部重讀前】${record.originalText}` : record.text;
-    row.append(caption, text); container.append(row);
+function appendSourceImage(container, url, label) {
+  const image = document.createElement('img'); image.className = 'source-screenshot'; image.src = url; image.alt = label; image.loading = 'lazy'; container.append(image);
+}
+async function renderCandidateSource(container, candidate, previewGeneration) {
+  container.dataset.loaded = 'pending'; container.setAttribute('aria-busy', 'true');
+  const allRecords = state.document?.records || [];
+  const records = allRecords.filter(record => record.source && candidate.source.includes(record.source));
+  const matching = state.pagePreviews.filter(preview => preview.source && candidate.source.includes(preview.source));
+  const previews = matching.length ? matching : state.pagePreviews;
+  try {
+    for (const preview of previews) {
+      let url = preview.url;
+      if (preview.kind !== 'excel') {
+        try {
+          const pageRecords = records.filter(record => (record.pageNumber ?? 1) === preview.pageNumber);
+          const blob = await createSourceScreenshot(preview, pageRecords);
+          if (previewGeneration !== state.previewGeneration) return;
+          url = URL.createObjectURL(blob); state.imageUrls.push(url);
+        } catch {
+          if (previewGeneration !== state.previewGeneration) return;
+        }
+      }
+      if (previewGeneration !== state.previewGeneration) return;
+      appendSourceImage(container, url, `${candidate.label}來源截圖`);
+    }
+    container.dataset.loaded = 'true';
+  } finally { container.removeAttribute('aria-busy'); }
+}
+async function renderSources(generation) {
+  if (state.document?.kind === 'excel') {
+    const previewGeneration = state.previewGeneration;
+    const blobs = await createExcelScreenshots(state.document.records);
+    if (generation !== state.generation || previewGeneration !== state.previewGeneration) return;
+    for (const blob of blobs) {
+      const url = URL.createObjectURL(blob); state.imageUrls.push(url);
+      state.pagePreviews.push({ kind: 'excel', url });
+      appendSourceImage(element('source-images'), url, 'Excel 可見儲存格預覽');
+    }
   }
-  if (records.length > 500) { const note = document.createElement('p'); note.textContent = `畫面僅顯示前 500 筆，共 ${records.length} 筆；Excel 匯出仍保留本次讀取的所有來源。`; container.append(note); }
-  const warnings = [...(state.document?.warnings || []), ...state.extraction.warnings];
-  if (!(state.extraction.candidates.length)) warnings.push('沒有找到可明確分類的面積，請查看來源並手動輸入；不會猜數字。');
-  warnings.push('只核對同一戶；全棟總面積、土地、總價或車位數不能直接當成本戶面積。');
-  element('read-warnings').textContent = [...new Set(warnings)].join('\n'); element('read-warnings').hidden = false;
+  element('source-details').hidden = !state.pagePreviews.length;
 }
 function selectPdfPages(text, count) {
   const pages = new Set();
@@ -187,8 +216,8 @@ async function readSelectedFile() {
       onPage: page => {
         if (generation !== state.generation) return;
         const url = URL.createObjectURL(page.blob); state.imageUrls.push(url);
-        const image = document.createElement('img'); image.src = url; image.alt = page.source; image.loading = 'lazy';
-        const caption = document.createElement('p'); caption.className = 'hint'; caption.textContent = page.source; element('source-images').append(caption, image);
+        state.pagePreviews.push({ ...page, blob: undefined, url });
+        appendSourceImage(element('source-images'), url, '來源原圖');
       }
     });
     if (generation !== state.generation) return;
@@ -200,7 +229,9 @@ async function readSelectedFile() {
       if (suggested && !state.transcriptReading.detected) Object.assign(state.fields[name], { value: suggested.value, unit: suggested.unit, sourceId: suggested.id, originalValue: suggested.value, originalUnit: suggested.unit });
     }
     if (state.transcriptReading.detected) applyTranscript();
-    renderFieldControls(); renderSources(); renderTranscript(); updateCalculation(); showScreen('review');
+    await renderSources(generation);
+    if (generation !== state.generation) return;
+    renderFieldControls(); renderTranscript(); updateCalculation(); showScreen('review');
   } catch (error) {
     if (generation !== state.generation) return;
     releaseImages();
