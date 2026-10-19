@@ -8,16 +8,16 @@
   <meta name="description" content="在手機內讀取房屋面積文件，核對後換算坪數與公設比。文件不會上傳。">
   <link rel="manifest" href="./manifest.webmanifest?v=1.4">
   <link rel="icon" href="./icon.svg?v=1.4" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=1.5">
+  <link rel="stylesheet" href="./styles.css?v=1.6">
   <title>房屋面積小工具</title>
   <script src="./src/compat.js"></script>
   <script src="./vendor/xlsx.full.min.js" defer></script>
   <script src="./vendor/tesseract.min.js" defer></script>
-  <script src="./src/app.js?v=1.5" type="module"></script>
+  <script src="./src/app.js?v=1.6" type="module"></script>
 </head>
 <body>
   <div class="app">
-    <header><div><p class="eyebrow">手機辨識・坪數換算</p><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version" aria-label="版本 1.5">1.5</span></header>
+    <header><div><p class="eyebrow">手機辨識・坪數換算</p><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version" aria-label="版本 1.6">1.6</span></header>
     <ol class="steps" aria-label="操作步驟"><li data-step="import" aria-current="step"><button id="step-import" type="button"><span class="step-number">1</span><span>選擇檔案</span></button></li><li data-step="review"><span class="step-number">2</span><span>核對與結果</span></li></ol>
     <main>
       <section data-screen="import">
@@ -39,13 +39,14 @@
       <section data-screen="review" hidden>
         <h2>確認這一戶的面積</h2><p id="source-name" class="muted source-name"></p>
         <details id="source-details"><summary>查看來源截圖</summary><div id="source-images"></div></details>
-        <details id="transcript-panel"><summary>謄本專用核對：主建物、陽台與兩組持分</summary><p class="hint">主建物與陽台填本戶面積；共有部分填謄本的共有總面積，再分別輸入共有與車位的權利範圍。「100000 分之 300」表示分子 300、分母 100000。請特別核對小數點、分母零的個數與共有建號；不要把土地持分或停車位數帶入。</p><div id="transcript-candidates" class="note"></div><button id="apply-transcript" class="secondary full" disabled>帶入單一候選（覆蓋對應欄位，仍須核對）</button><button id="retry-transcript" class="secondary full" hidden>用謄本表格模式重新辨識（清除本次輸入）</button></details>
+        <p id="transcript-candidates" class="feedback" role="status" hidden></p>
         <div id="fields" class="fields"></div>
         <label for="scope">共有部分的面積範圍</label><select id="scope"><option value="unknown">請核對：本戶／全棟／全層？</option><option value="household">本戶已分攤的面積</option><option value="whole">全棟／全層，需按本戶持分換算</option></select>
-        <div id="share-fields" class="share-fields" hidden><p class="hint">本戶共有＝上方共有總面積 × 共有持分。車位持分在下方另外確認，不共用分子。</p><div class="two-columns"><label>共有持分分子<input id="share-numerator" type="text" inputmode="numeric" maxlength="12"></label><label>共有持分分母<input id="share-denominator" type="text" inputmode="numeric" maxlength="12"></label></div><label class="check"><input id="share-confirmed" type="checkbox"><span>已確認這組持分適用於上方共有部分</span></label></div>
+        <div id="share-fields" class="share-fields" hidden><p class="hint">本戶共有＝上方共有總面積 × 共有持分。車位持分在下方另外確認，不共用分子。</p><div class="two-columns"><label>共有持分分子<input id="share-numerator" type="text" inputmode="numeric" maxlength="12"></label><label>共有持分分母<input id="share-denominator" type="text" inputmode="numeric" maxlength="12"></label></div><div id="common-share-source" class="field-evidence" data-source-field="commonShare" hidden></div><label class="check"><input id="share-confirmed" type="checkbox"><span>已確認這組持分適用於上方共有部分</span></label></div>
         <label for="parking-scope">車位面積的換算方式</label><select id="parking-scope"><option value="household">已知本戶車位面積，直接輸入</option><option value="common">同一筆共有總面積 × 車位持分</option></select>
-        <div id="parking-share-fields" class="share-fields" hidden><p class="hint">車位＝上方未分攤的共有總面積 × 車位持分；不會再乘共有持分，也不使用手動車位欄。</p><div class="two-columns"><label>車位持分分子<input id="parking-share-numerator" type="text" inputmode="numeric" maxlength="12"></label><label>車位持分分母<input id="parking-share-denominator" type="text" inputmode="numeric" maxlength="12"></label></div><label class="check"><input id="parking-share-confirmed" type="checkbox"><span>已核對車位持分適用同一共有建號及上方共有總面積</span></label><p id="parking-share-output" class="feedback" aria-live="polite"></p></div>
+        <div id="parking-share-fields" class="share-fields" hidden><p class="hint">車位＝上方未分攤的共有總面積 × 車位持分；不會再乘共有持分，也不使用手動車位欄。</p><div class="two-columns"><label>車位持分分子<input id="parking-share-numerator" type="text" inputmode="numeric" maxlength="12"></label><label>車位持分分母<input id="parking-share-denominator" type="text" inputmode="numeric" maxlength="12"></label></div><div id="parking-share-source" class="field-evidence" data-source-field="parkingShare" hidden></div><label class="check"><input id="parking-share-confirmed" type="checkbox"><span>已核對車位持分適用同一共有建號及上方共有總面積</span></label><p id="parking-share-output" class="feedback" aria-live="polite"></p></div>
         <label for="inclusion">上述共有部分是否已包含車位？</label><select id="inclusion"><option value="unknown">不確定，先不算衍生結果</option><option value="included">已含車位，計算公設時扣除</option><option value="excluded">未含車位，車位另外列計</option></select>
+        <details id="transcript-panel" hidden><summary>辨識選項／重新帶入</summary><p class="hint">主建物與陽台填本戶面積；共有部分填謄本的共有總面積，再分別輸入共有與車位的權利範圍。「100000 分之 300」表示分子 300、分母 100000。請特別核對小數點、分母零的個數與共有建號；不要把土地持分或停車位數帶入。</p><button id="apply-transcript" class="secondary full" disabled>帶入單一候選（覆蓋對應欄位，仍須核對）</button><button id="retry-transcript" class="secondary full" hidden>用謄本表格模式重新辨識（清除本次輸入）</button></details>
         <p id="review-feedback" class="feedback" aria-live="polite"></p><p id="review-errors" class="error" role="alert" hidden></p>
         <label class="check"><input id="confirmed" type="checkbox"><span>已核對數值、單位、來源與車位關係。空白代表資料不足，不當作 0。</span></label>
         <button id="calculate" class="primary full" disabled>確認並計算</button>
