@@ -90,6 +90,8 @@ select { text-overflow: ellipsis; }
 .field-values { display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 8px; }
 .field-values input { text-align: right; font-variant-numeric: tabular-nums; background: var(--page); font-size: 20px; font-weight: 650; }
 .field-source { font-size: 12px; margin-top: 8px; min-height: 40px; }
+.fields { scroll-margin-top: 20px; }
+.result-panel { margin-top: 28px; padding-top: 24px; border-top: 2px solid var(--brand); scroll-margin-top: 20px; }
 .source-name { overflow-wrap: anywhere; margin-bottom: 14px; }
 .source-screenshot, #source-images img { display: block; width: 100%; height: auto; margin: 10px 0; background: #fff; border-radius: 6px; }
 .candidate-source { margin: 8px 0 14px; }
