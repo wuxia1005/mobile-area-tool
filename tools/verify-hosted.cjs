@@ -143,7 +143,6 @@ async function main() {
     assert.equal(await page.locator('[data-screen="review"]').isVisible(), true);
   };
   const backToImport = async () => {
-    if (await page.locator('[data-screen="result"]').isVisible()) await page.locator('#edit').click();
     if (await page.locator('[data-screen="review"]').isVisible()) await page.locator('#back-import').click();
     await page.locator('[data-screen="import"]').waitFor({ state: 'visible' });
   };
@@ -167,8 +166,13 @@ async function main() {
     await page.locator('#calculate').click();
     assert.equal(await page.locator('[data-result="without"]').textContent(), '33.28 坪');
     assert.equal(await page.locator('[data-result="ratio"]').textContent(), '27.27%');
+    assert.equal(await page.locator('.steps li').count(), 2);
+    assert.equal(await page.locator('[data-screen="review"]').isVisible(), true);
+    assert.equal(await page.locator('[data-screen="review"] #result-panel').isVisible(), true);
+    assert.equal(await page.locator('#field-main').isVisible(), true);
     await page.screenshot({ path: path.join(output, 'manual-phone.png'), fullPage: true });
     checks.push('手動 70／10／50／20 ㎡、共有含車位＝33.28 坪／27.27%');
+    checks.push('核對與結果合併為同一頁，兩步驟導覽且輸入欄位保持可見');
 
     await page.locator('#edit').click();
     for (const [field, value] of Object.entries({ main: '60', accessory: '5', common: '10000' })) await page.locator(`#field-${field}`).fill(value);
