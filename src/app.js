@@ -18,13 +18,20 @@ function showScreen(screen) {
   document.querySelectorAll('[data-screen]').forEach(section => { section.hidden = section.dataset.screen !== screen; });
   element('selection').hidden = screen !== 'selection';
   element('processing').hidden = screen !== 'processing';
-  document.querySelectorAll('[data-step]').forEach(step => { if (step.dataset.step === screen) step.setAttribute('aria-current', 'step'); else step.removeAttribute('aria-current'); });
+  const activeStep = ['selection', 'processing'].includes(screen) ? 'import' : screen;
+  document.querySelectorAll('[data-step]').forEach(step => { if (step.dataset.step === activeStep) step.setAttribute('aria-current', 'step'); else step.removeAttribute('aria-current'); });
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 function messageError(error) { element('global-error').textContent = error?.message || String(error); element('global-error').hidden = false; }
 function clearError() { element('global-error').hidden = true; element('global-error').textContent = ''; }
 function releaseImages() { state.previewGeneration += 1; for (const url of state.imageUrls) URL.revokeObjectURL(url); state.imageUrls = []; state.pagePreviews = []; element('source-images').replaceChildren(); element('source-details').open = false; }
 function invalidate() { state.confirmed = false; state.result = null; element('confirmed').checked = false; element('action-status').textContent = ''; updateCalculation(); }
+function returnToImport() {
+  const processing = state.screen === 'processing';
+  state.generation += 1; state.controller?.abort(); state.controller = null;
+  if (processing) releaseImages();
+  clearError(); invalidate(); showScreen('import');
+}
 function revokeOwnershipConfirmation(common = true) {
   for (const id of common ? ['share-confirmed', 'parking-share-confirmed'] : ['parking-share-confirmed']) {
     addHistory(id, element(id).checked, false, '換算基準或持分已修改，需重新核對');
@@ -271,7 +278,14 @@ function showResults() {
   const result = updateCalculation();
   if (!state.confirmed || result.errors.length || element('calculate').disabled) return;
   state.result = result;
-  for (const [name, value] of Object.entries(result.display)) document.querySelector(`[data-result="${name}"]`)?.replaceChildren(document.createTextNode(value));
+  for (const [name, value] of Object.entries(result.display)) {
+    const output = document.querySelector(`[data-result="${name}"]`);
+    if (!output) continue;
+    const suffix = value.match(/( 坪|%)$/)?.[0];
+    if (!suffix) { output.replaceChildren(document.createTextNode(value)); continue; }
+    const unit = document.createElement('span'); unit.className = 'result-unit'; unit.textContent = suffix;
+    output.replaceChildren(document.createTextNode(value.slice(0, -suffix.length)), unit);
+  }
   element('result-status').textContent = Object.values(result.display).some(value => value === '待確認') ? '已核對輸入・部分資料待確認' : '已核對輸入';
   element('result-note').textContent = result.warnings.join('\n') || '使用原始精度計算；顯示值取兩位後相加，可能與總計相差 0.01 坪。';
   element('summary').value = summaryText(result); showScreen('result');
@@ -319,7 +333,8 @@ element('apply-transcript').addEventListener('click', applyTranscript);
 element('retry-transcript').addEventListener('click', () => { element('transcript-mode').checked = true; const file = state.file; resetDocument(file); readSelectedFile(); });
 element('confirmed').addEventListener('change', () => { state.confirmed = element('confirmed').checked; updateCalculation(); });
 element('calculate').addEventListener('click', showResults);
-element('back-import').addEventListener('click', () => { clearError(); showScreen('import'); invalidate(); });
+element('back-import').addEventListener('click', returnToImport);
+element('step-import').addEventListener('click', returnToImport);
 element('edit').addEventListener('click', () => { clearError(); invalidate(); showScreen('review'); });
 element('copy-summary').addEventListener('click', async () => { try { await navigator.clipboard.writeText(element('summary').value); element('action-status').textContent = '已複製摘要，可切回 LINE 貼上；尚未自動傳送。'; } catch { element('summary').focus(); element('summary').select(); element('action-status').textContent = '請長按下方摘要，選擇複製，再切回 LINE 貼上。'; } });
 element('export').addEventListener('click', downloadResult);
