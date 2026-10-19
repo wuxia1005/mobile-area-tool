@@ -8,17 +8,17 @@
   <meta name="description" content="在手機內讀取房屋面積文件，核對後換算坪數與公設比。文件不會上傳。">
   <link rel="manifest" href="./manifest.webmanifest?v=1.4">
   <link rel="icon" href="./icon.svg?v=1.4" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=1.4">
+  <link rel="stylesheet" href="./styles.css?v=1.5">
   <title>房屋面積小工具</title>
   <script src="./src/compat.js"></script>
   <script src="./vendor/xlsx.full.min.js" defer></script>
   <script src="./vendor/tesseract.min.js" defer></script>
-  <script src="./src/app.js?v=1.4" type="module"></script>
+  <script src="./src/app.js?v=1.5" type="module"></script>
 </head>
 <body>
   <div class="app">
-    <header><div><p class="eyebrow">手機辨識・坪數換算</p><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version" aria-label="版本 1.4">1.4</span></header>
-    <ol class="steps" aria-label="操作步驟"><li data-step="import" aria-current="step"><button id="step-import" type="button"><span class="step-number">1</span><span>選擇檔案</span></button></li><li data-step="review"><span class="step-number">2</span><span>核對資料</span></li><li data-step="result"><span class="step-number">3</span><span>查看結果</span></li></ol>
+    <header><div><p class="eyebrow">手機辨識・坪數換算</p><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version" aria-label="版本 1.5">1.5</span></header>
+    <ol class="steps" aria-label="操作步驟"><li data-step="import" aria-current="step"><button id="step-import" type="button"><span class="step-number">1</span><span>選擇檔案</span></button></li><li data-step="review"><span class="step-number">2</span><span>核對與結果</span></li></ol>
     <main>
       <section data-screen="import">
         <h2>從 LINE 收到檔案？</h2><p class="muted">先存到 iPhone 的「檔案」或「照片」，再選取要換算的文件。</p>
@@ -48,12 +48,13 @@
         <label for="inclusion">上述共有部分是否已包含車位？</label><select id="inclusion"><option value="unknown">不確定，先不算衍生結果</option><option value="included">已含車位，計算公設時扣除</option><option value="excluded">未含車位，車位另外列計</option></select>
         <p id="review-feedback" class="feedback" aria-live="polite"></p><p id="review-errors" class="error" role="alert" hidden></p>
         <label class="check"><input id="confirmed" type="checkbox"><span>已核對數值、單位、來源與車位關係。空白代表資料不足，不當作 0。</span></label>
-        <button id="calculate" class="primary full" disabled>確認並計算</button><button id="back-import" class="secondary full">重新選擇文件</button>
-      </section>
-      <section data-screen="result" hidden>
-        <h2>換算結果</h2><p id="result-status" class="muted"></p><div class="total"><span>總坪數（不含車位）</span><strong data-result="without"></strong></div>
+        <button id="calculate" class="primary full" disabled>確認並計算</button>
+        <section id="result-panel" class="result-panel" aria-labelledby="result-heading" hidden>
+        <h2 id="result-heading" tabindex="-1">換算結果</h2><p id="result-status" class="muted"></p><div class="total"><span>總坪數（不含車位）</span><strong data-result="without"></strong></div>
         <dl class="results"><div><dt>總坪數（含車位）</dt><dd data-result="with"></dd></div><div><dt>公設比（扣車位）</dt><dd data-result="ratio"></dd></div><div><dt>公設坪數（不含車位）</dt><dd data-result="public"></dd></div><div><dt>車位坪數</dt><dd data-result="parking"></dd></div><div><dt>主建物坪數</dt><dd data-result="main"></dd></div><div><dt>附屬建物坪數</dt><dd data-result="accessory"></dd></div></dl>
-        <p id="result-note" class="feedback"></p><label class="check"><input id="include-source" type="checkbox"><span>匯出完整來源與修正紀錄（可能包含姓名、其他戶資料；分享前請確認）</span></label><div class="actions"><button id="copy-summary">複製 LINE 摘要</button><button id="export">匯出 Excel</button></div><button id="share-result" class="secondary full">分享結果檔案</button><p id="action-status" class="feedback" role="status"></p><label for="summary">文字摘要（可長按複製）</label><textarea id="summary" readonly></textarea><button id="edit" class="secondary full">返回修改資料</button>
+        <p id="result-note" class="feedback"></p><label class="check"><input id="include-source" type="checkbox"><span>匯出完整來源與修正紀錄（可能包含姓名、其他戶資料；分享前請確認）</span></label><div class="actions"><button id="copy-summary" disabled>複製 LINE 摘要</button><button id="export" disabled>匯出 Excel</button></div><button id="share-result" class="secondary full" disabled>分享結果檔案</button><p id="action-status" class="feedback" role="status"></p><label for="summary">文字摘要（可長按複製）</label><textarea id="summary" readonly></textarea><button id="edit" class="secondary full">回到核對欄位</button>
+        </section>
+        <button id="back-import" class="secondary full">重新選擇文件</button>
       </section>
       <p id="global-error" class="error" role="alert" hidden></p>
     </main>
