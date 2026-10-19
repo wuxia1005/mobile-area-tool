@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { refineTranscript } from '../src/ocr-refine.js';
+import { extractTranscript } from '../src/transcript.js';
 
 function canvasHarness(readings = []) {
   const created = [];
@@ -66,6 +67,78 @@ test('已有完整小數與有效持分時不讓重讀破壞正確數字', async
     assert.equal(records[0].text, '總面積56.72平方公尺');
     assert.equal(records[1].text, '權利範圍100000分之596 面積10,304.04平方公尺');
     assert.equal(harness.created.length, 0);
+  } finally { harness.close(); }
+});
+
+test('面積整段未讀出數字時仍依明確標籤重讀而不直接補值', async () => {
+  for (const label of ['附屬建物用途 陽台', '權利範圍10000分之150 面積']) {
+    const harness = canvasHarness([`${label}7.65平方公尺`, `${label}7.65平方公尺`]);
+    try {
+      const records = [row(`${label} 無法辨識`)];
+      await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+      assert.match(records[0].text, /7\.65平方公尺/u);
+      assert.equal(records[0].originalText, `${label} 無法辨識`);
+      assert.equal(harness.recognitionCalls.length, 2);
+      assert.ok(harness.created.every(canvas => canvas.width === 0 && canvas.height === 0));
+    } finally { harness.close(); }
+  }
+});
+
+test('明確面積標籤仍須兩次有效且一致的辨識而不能只因缺數字就帶入', async () => {
+  const harness = canvasHarness(['附屬建物用途陽台 7.65平方公尺', '附屬建物用途陽台 7.66平方公尺', '7.67平方公尺']);
+  try {
+    const records = [row('附屬建物用途陽台 無法辨識')];
+    const before = structuredClone(records);
+    await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+    assert.deepEqual(records, before);
+    assert.equal(harness.recognitionCalls.length, 3);
+  } finally { harness.close(); }
+});
+
+test('共有面積重讀不能因面積一致而覆蓋原有持分或引入未交叉核對的持分', async () => {
+  for (const original of ['權利範圍10000分之150 面積無法辨識', '權利範圍無法辨識 面積無法辨識']) {
+    const harness = canvasHarness(['權利範圍10000分之151 面積1000.00平方公尺', '權利範圍10000分之152 面積1000.00平方公尺']);
+    try {
+      const records = [row(original)];
+      await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+      assert.equal(records[0].text, original);
+      assert.equal(records[0].originalText, undefined);
+    } finally { harness.close(); }
+  }
+});
+
+test('持分重讀僅讀到分數時保留同一原列的權利標籤及有效共有面積', async () => {
+  const harness = canvasHarness(['10000分之150', '10000分之150']);
+  try {
+    const original = '權利範圍10000分之無法辨識150 面積1000.00平方公尺';
+    const records = [{ text: '建物標示部' }, { text: '共有部分' }, row(original)];
+    await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+    const reading = extractTranscript(records);
+    assert.equal(reading.available.common.value, '1000.00');
+    assert.equal(reading.available.commonShare.numerator, '150');
+    assert.equal(reading.available.commonShare.denominator, '10000');
+    assert.equal(records[2].originalText, original);
+    assert.equal(harness.recognitionCalls.length, 2);
+  } finally { harness.close(); }
+});
+
+test('持分交叉重讀不可覆蓋原列已讀到的有效面積', async () => {
+  const harness = canvasHarness(['權利範圍10000分之150 面積2000.00平方公尺', '權利範圍10000分之150 面積2000.00平方公尺']);
+  try {
+    const original = '權利範圍10000分之無法辨識150 面積1000.00平方公尺';
+    const records = [row(original)];
+    await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+    assert.equal(records[0].text, original);
+    assert.equal(records[0].originalText, undefined);
+  } finally { harness.close(); }
+});
+
+test('基地或土地權利範圍不是共有面積局部補讀目標', async () => {
+  const harness = canvasHarness();
+  try {
+    const records = [row('基地權利範圍10000分之150 面積無法辨識'), row('土地權利範圍10000分之150 面積無法辨識', 160)];
+    await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+    assert.equal(harness.recognitionCalls.length, 0);
   } finally { harness.close(); }
 });
 
