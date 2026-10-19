@@ -8,16 +8,16 @@
   <meta name="description" content="在手機內讀取房屋面積文件，核對後換算坪數與公設比。文件不會上傳。">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=4">
   <title>房屋面積小工具</title>
   <script src="./src/compat.js"></script>
   <script src="./vendor/xlsx.full.min.js" defer></script>
   <script src="./vendor/tesseract.min.js" defer></script>
-  <script src="./src/app.js?v=3" type="module"></script>
+  <script src="./src/app.js?v=4" type="module"></script>
 </head>
 <body>
   <div class="app">
-    <header><div><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version">面積加強版 3</span></header>
+    <header><div><h1>房屋面積小工具</h1><p>檔案留在手機・核對後再計算</p></div><span class="version">面積加強版 4</span></header>
     <ol class="steps" aria-label="操作步驟"><li data-step="import" aria-current="step">① 選擇檔案</li><li data-step="review">② 核對資料</li><li data-step="result">③ 查看結果</li></ol>
     <main>
       <section data-screen="import">
@@ -27,7 +27,7 @@
         <input id="file-input" type="file" hidden>
         <div class="note">不會讀取 LINE 聊天室，也不會把文件上傳。辨識時請保持此頁開啟，先勿鎖屏。</div>
         <button class="secondary full" id="manual">不選檔案，直接輸入面積</button>
-        <details class="help"><summary>使用與隱私說明</summary><p>第一次開啟需下載工具與辨識模型；不使用付費 API。文件與結果只保留在本頁記憶體，重新整理或關閉後可能遺失，請先匯出。模糊、遮蔽、缺少面積細項或持分的文件不能保證自動辨識。PDF 不讀取隱藏文字圖層；Excel 略過隱藏工作表、列、欄，不執行巨集或公式。</p><p>Safari「分享 → 加入主畫面」後，可像 App 開啟。此版本未宣稱離線可用。建議使用 iOS 17 以上，仍需在你的 iPhone 驗證。</p></details>
+        <details class="help"><summary>使用與隱私說明</summary><p>第一次開啟需下載工具與辨識模型；不使用付費 API。文件與結果只保留在本頁記憶體，重新整理或關閉後可能遺失，請先匯出。模糊、遮蔽、缺少面積細項或持分的文件不能保證自動辨識。PDF 不讀取隱藏文字圖層；Excel 略過隱藏工作表、列、欄，不執行巨集或公式。</p><p>Excel 來源圖是可見儲存格預覽，不是原工作簿畫面；若用色塊、圖形或圖片遮蔽資料，請改匯入畫面截圖。</p><p>Safari「分享 → 加入主畫面」後，可像 App 開啟。此版本未宣稱離線可用。建議使用 iOS 17 以上，仍需在你的 iPhone 驗證。</p></details>
       </section>
       <section id="selection" hidden>
         <h2>選擇要讀取的範圍</h2><p id="selection-name" class="muted"></p>
@@ -37,9 +37,8 @@
       </section>
       <section id="processing" hidden aria-live="polite"><h2>正在手機內處理</h2><p id="progress-label"></p><progress id="progress" max="1" value="0"></progress><p class="hint">不會上傳文件。中文與掃描 PDF 可能較慢，請保持畫面開啟。</p><button id="cancel-read" class="secondary full">取消處理</button></section>
       <section data-screen="review" hidden>
-        <h2>確認這一戶的面積</h2><p id="source-name" class="muted source-name"></p><p class="note">已辨識的平方公尺會先帶入並換算坪數；請核對原圖。共有與車位持分仍須各自確認，缺資料不當作 0。</p>
-        <div id="read-warnings" class="note" hidden></div>
-        <details id="source-details"><summary>查看來源原圖與讀取文字</summary><div id="source-images"></div><div id="source-records" class="source-records"></div></details>
+        <h2>確認這一戶的面積</h2><p id="source-name" class="muted source-name"></p>
+        <details id="source-details"><summary>查看來源截圖</summary><div id="source-images"></div></details>
         <details id="transcript-panel"><summary>謄本專用核對：主建物、陽台與兩組持分</summary><p class="hint">主建物與陽台填本戶面積；共有部分填謄本的共有總面積，再分別輸入共有與車位的權利範圍。「100000 分之 300」表示分子 300、分母 100000。請特別核對小數點、分母零的個數與共有建號；不要把土地持分或停車位數帶入。</p><div id="transcript-candidates" class="note"></div><button id="apply-transcript" class="secondary full" disabled>帶入單一候選（覆蓋對應欄位，仍須核對）</button><button id="retry-transcript" class="secondary full" hidden>用謄本表格模式重新辨識（清除本次輸入）</button></details>
         <div id="fields" class="fields"></div>
         <label for="scope">共有部分的面積範圍</label><select id="scope"><option value="unknown">請核對：本戶／全棟／全層？</option><option value="household">本戶已分攤的面積</option><option value="whole">全棟／全層，需按本戶持分換算</option></select>
