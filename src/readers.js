@@ -1,5 +1,5 @@
 import { cleanTranscriptPixels } from './ocr-image.js?v=3';
-import { refineTranscript } from './ocr-refine.js?v=3';
+import { refineTranscript } from './ocr-refine.js?v=1.7';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_CANVAS_PIXELS = 2500000;
