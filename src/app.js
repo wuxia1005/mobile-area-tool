@@ -25,7 +25,14 @@ function showScreen(screen) {
 function messageError(error) { element('global-error').textContent = error?.message || String(error); element('global-error').hidden = false; }
 function clearError() { element('global-error').hidden = true; element('global-error').textContent = ''; }
 function releaseImages() { state.previewGeneration += 1; for (const url of state.imageUrls) URL.revokeObjectURL(url); state.imageUrls = []; state.pagePreviews = []; element('source-images').replaceChildren(); element('source-details').open = false; }
-function invalidate() { state.confirmed = false; state.result = null; element('confirmed').checked = false; element('action-status').textContent = ''; updateCalculation(); }
+function clearResults() {
+  state.result = null; element('result-panel').hidden = true;
+  document.querySelectorAll('[data-result]').forEach(output => output.replaceChildren());
+  for (const id of ['result-status', 'result-note', 'action-status']) element(id).textContent = '';
+  element('summary').value = '';
+  for (const id of ['copy-summary', 'export', 'share-result']) element(id).disabled = true;
+}
+function invalidate() { state.confirmed = false; element('confirmed').checked = false; clearResults(); updateCalculation(); }
 function returnToImport() {
   const processing = state.screen === 'processing';
   state.generation += 1; state.controller?.abort(); state.controller = null;
@@ -96,7 +103,7 @@ function renderFieldControls() {
 }
 function resetDocument(file) {
   state.file = file; state.document = null; state.result = null; state.history = []; state.extraction = { candidates: [], suggestions: {}, warnings: [] }; state.confirmed = false;
-  clearFields(); releaseImages();
+  clearFields(); releaseImages(); clearResults();
   state.transcript = element('transcript-mode').checked; state.transcriptReading = null;
   element('scope').value = 'unknown'; element('inclusion').value = 'unknown'; element('share-numerator').value = ''; element('share-denominator').value = ''; element('share-confirmed').checked = false; element('confirmed').checked = false;
   element('parking-scope').value = 'household'; element('parking-share-numerator').value = ''; element('parking-share-denominator').value = ''; element('parking-share-confirmed').checked = false;
@@ -288,7 +295,11 @@ function showResults() {
   }
   element('result-status').textContent = Object.values(result.display).some(value => value === '待確認') ? '已核對輸入・部分資料待確認' : '已核對輸入';
   element('result-note').textContent = result.warnings.join('\n') || '使用原始精度計算；顯示值取兩位後相加，可能與總計相差 0.01 坪。';
-  element('summary').value = summaryText(result); showScreen('result');
+  element('summary').value = summaryText(result);
+  element('result-panel').hidden = false;
+  for (const id of ['copy-summary', 'export', 'share-result']) element(id).disabled = false;
+  element('result-panel').scrollIntoView({ block: 'start', behavior: 'instant' });
+  element('result-heading').focus({ preventScroll: true });
 }
 function workbookBytes() {
   if (!state.result || !state.confirmed) throw new Error('請先核對並計算。');
@@ -331,12 +342,12 @@ element('cancel-read').addEventListener('click', () => { state.generation += 1; 
 for (const id of settingIds) element(id).addEventListener(/(?:numerator|denominator)$/.test(id) ? 'input' : 'change', () => { if (/share-(?:numerator|denominator)$/.test(id)) { const confirmedId = id.startsWith('parking-') ? 'parking-share-confirmed' : 'share-confirmed'; addHistory(confirmedId, element(confirmedId).checked, false, '持分已修改，需重新核對'); element(confirmedId).checked = false; } if (id === 'scope') revokeOwnershipConfirmation(); if (id === 'parking-scope') revokeOwnershipConfirmation(false); addHistory(id, state.settings[id], element(id).type === 'checkbox' ? element(id).checked : element(id).value, '人工修改換算設定'); invalidate(); });
 element('apply-transcript').addEventListener('click', applyTranscript);
 element('retry-transcript').addEventListener('click', () => { element('transcript-mode').checked = true; const file = state.file; resetDocument(file); readSelectedFile(); });
-element('confirmed').addEventListener('change', () => { state.confirmed = element('confirmed').checked; updateCalculation(); });
+element('confirmed').addEventListener('change', () => { state.confirmed = element('confirmed').checked; if (!state.confirmed) clearResults(); updateCalculation(); });
 element('calculate').addEventListener('click', showResults);
 element('back-import').addEventListener('click', returnToImport);
 element('step-import').addEventListener('click', returnToImport);
-element('edit').addEventListener('click', () => { clearError(); invalidate(); showScreen('review'); });
-element('copy-summary').addEventListener('click', async () => { try { await navigator.clipboard.writeText(element('summary').value); element('action-status').textContent = '已複製摘要，可切回 LINE 貼上；尚未自動傳送。'; } catch { element('summary').focus(); element('summary').select(); element('action-status').textContent = '請長按下方摘要，選擇複製，再切回 LINE 貼上。'; } });
+element('edit').addEventListener('click', () => { clearError(); element('fields').scrollIntoView({ block: 'start', behavior: 'instant' }); element('field-main').focus({ preventScroll: true }); });
+element('copy-summary').addEventListener('click', async () => { if (!state.result || !state.confirmed) return; try { await navigator.clipboard.writeText(element('summary').value); element('action-status').textContent = '已複製摘要，可切回 LINE 貼上；尚未自動傳送。'; } catch { element('summary').focus(); element('summary').select(); element('action-status').textContent = '請長按下方摘要，選擇複製，再切回 LINE 貼上。'; } });
 element('export').addEventListener('click', downloadResult);
 element('share-result').addEventListener('click', async () => { try { const file = resultFile(); if (!navigator.canShare?.({ files: [file] })) { downloadResult(); return; } await navigator.share({ files: [file], title: '房屋面積換算' }); element('action-status').textContent = '已開啟手機分享流程，請自行選擇 LINE 或儲存位置。'; } catch (error) { if (error.name !== 'AbortError') messageError(error); } });
 renderFieldControls(); renderTranscript(); updateCalculation();
