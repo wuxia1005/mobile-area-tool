@@ -1,6 +1,6 @@
 import { calculateAreas } from './core.js?v=3';
 import { extractCandidates } from './extract.js?v=3';
-import { inspectDocument, readDocument } from './readers.js?v=3';
+import { inspectDocument, readDocument } from './readers.js?v=1.7';
 import { extractTranscript } from './transcript.js?v=3';
 import { createSourceScreenshot, createExcelScreenshots } from './source-screenshots.js?v=4';
 
