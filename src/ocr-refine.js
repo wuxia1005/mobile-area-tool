@@ -51,7 +51,11 @@ async function recognizeCrop(canvas, box, scale, mode, threshold, ocr, options) 
     context.fillRect(0, 0, crop.width, crop.height);
     const sourceScale = Number(options.sourceScale);
     if (options.sourceImage && Number.isFinite(sourceScale) && sourceScale > 0) {
-      context.drawImage(options.sourceImage, left / sourceScale, top / sourceScale, width / sourceScale, height / sourceScale, 0, 0, crop.width, crop.height);
+      const sourceWidth = Number(options.sourceImage.naturalWidth || options.sourceImage.width);
+      const sourceHeight = Number(options.sourceImage.naturalHeight || options.sourceImage.height);
+      const scaleX = sourceWidth > 0 ? canvas.width / sourceWidth : sourceScale;
+      const scaleY = sourceHeight > 0 ? canvas.height / sourceHeight : sourceScale;
+      context.drawImage(options.sourceImage, left / scaleX, top / scaleY, width / scaleX, height / scaleY, 0, 0, crop.width, crop.height);
     } else context.drawImage(canvas, left, top, width, height, 0, 0, crop.width, crop.height);
     if (threshold) {
       const pixels = context.getImageData(0, 0, crop.width, crop.height);
