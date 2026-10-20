@@ -1,5 +1,5 @@
 import { cleanTranscriptPixels } from './ocr-image.js?v=3';
-import { refineTranscript } from './ocr-refine.js?v=1.7';
+import { refineTranscript } from './ocr-refine.js?v=1.8';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_CANVAS_PIXELS = 2500000;
@@ -245,6 +245,7 @@ function ocrRecords(data, source, pageNumber) {
   }
   return lines.map((line, index) => ({
     ...line,
+    ocr: true,
     source: `${source}，第 ${index + 1} 行`,
     pageNumber,
     unitHint: detectUnit(line.text)
