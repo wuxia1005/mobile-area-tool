@@ -18,6 +18,18 @@ function shares(line) {
   return [...line.matchAll(/(?<![\d.,?A-Za-z+\-])(\d{1,12})分之(\d{1,12})(?![\d.,?])(?=$|[*#_|:：;；。)）\]】]|面積|其他登記|權利範圍|共有部分|共用部分|停車位)/gu)].filter(match => BigInt(match[1]) > 0n && BigInt(match[2]) > 0n && BigInt(match[2]) <= BigInt(match[1])).map(match => ({ numerator: match[2], denominator: match[1] }));
 }
 
+function checkedShares(line, warnings, label) {
+  const values = shares(line.compact);
+  if (!line.ocr && !line.bbox) return values;
+  const verified = line.shareVerification;
+  if (verified?.status === 'verified') {
+    const matching = values.filter(value => value.numerator === verified.numerator && value.denominator === verified.denominator);
+    if (matching.length === 1) return matching;
+  }
+  warnings.add(`${label}未通過局部交叉核對，未自動帶入；請對照原圖手動輸入分子、分母。`);
+  return [];
+}
+
 function evidence(lines) {
   return lines.map(line => line.originalText ? `${line.text}\n【局部重讀前】${line.originalText}` : line.text).join('\n');
 }
@@ -134,7 +146,7 @@ export function extractTranscript(records = []) {
         for (const line of ownershipLines) {
           const next = section[section.indexOf(line) + 1];
           const fractionLines = shares(line.compact).length ? [line] : next && !/門廊|夾層|屋頂|用途/u.test(next.compact) ? [line, next] : [line];
-          for (const value of shares(fractionLines.at(-1).compact)) add('commonShare', value, fractionLines);
+          for (const value of checkedShares(fractionLines.at(-1), warnings, '共有持分')) add('commonShare', value, fractionLines);
         }
       }
     }
@@ -143,10 +155,10 @@ export function extractTranscript(records = []) {
       for (const [index, line] of parking.entries()) {
         if (index > 0 && /其他登記事項|基地權利|土地/u.test(line.compact)) break;
         if (/權利範圍/u.test(line.compact)) {
-          for (const value of shares(line.compact)) add('parkingShare', value, [...new Set([parking[0], line])]);
+          for (const value of checkedShares(line, warnings, '車位持分')) add('parkingShare', value, [...new Set([parking[0], line])]);
           const next = parking[index + 1];
           if (next && !/其他登記事項|基地權利|土地/u.test(next.compact) && !shares(line.compact).length) {
-            for (const value of shares(next.compact)) add('parkingShare', value, [...new Set([parking[0], line, next])]);
+            for (const value of checkedShares(next, warnings, '車位持分')) add('parkingShare', value, [...new Set([parking[0], line, next])]);
           }
         }
       }
