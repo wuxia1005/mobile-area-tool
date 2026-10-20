@@ -1,7 +1,7 @@
 import { calculateAreas } from './core.js?v=3';
 import { extractCandidates } from './extract.js?v=3';
-import { inspectDocument, readDocument } from './readers.js?v=1.7';
-import { extractTranscript } from './transcript.js?v=3';
+import { inspectDocument, readDocument } from './readers.js?v=1.8';
+import { extractTranscript } from './transcript.js?v=1.8';
 import { createSourceScreenshot, createExcelScreenshots } from './source-screenshots.js?v=4';
 
 const fieldNames = ['main', 'accessory', 'common', 'parking'];
@@ -354,7 +354,7 @@ function workbookBytes() {
   for (const name of fieldNames) { const field = state.fields[name]; const source = state.extraction.candidates.find(candidate => candidate.id === field.sourceId); const ignored = name === 'parking' && element('parking-scope').value === 'common'; const normalized = ignored ? '' : field.value.trim(); const numericValue = !normalized ? '' : normalized.replace(/[^0-9]/g, '').length <= 15 ? Number(normalized) : normalized; inputs.push([fieldLabels[name], numericValue, ignored ? '依共有總面積乘車位持分；手動值未使用' : field.unit, field.originalValue, field.originalUnit, source?.source || '手動輸入', source?.text || '']); }
   const inputSheet = XLSX.utils.aoa_to_sheet(inputs); inputSheet['!cols'] = [{ wch: 18 }, { wch: 18 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 55 }, { wch: 80 }];
   XLSX.utils.book_append_sheet(workbook, inputSheet, '核對與來源');
-  const rawSheet = XLSX.utils.aoa_to_sheet([['來源位置', '讀取文字', '局部重讀前文字'], ...(state.document?.records || []).map(record => [record.source, record.text, record.originalText || ''])]); rawSheet['!cols'] = [{ wch: 60 }, { wch: 100 }, { wch: 100 }]; XLSX.utils.book_append_sheet(workbook, rawSheet, '原始讀取');
+  const rawSheet = XLSX.utils.aoa_to_sheet([['來源位置', '讀取文字', '局部重讀前文字', '持分交叉核對'], ...(state.document?.records || []).map(record => [record.source, record.text, record.originalText || '', record.shareVerification ? JSON.stringify(record.shareVerification) : record.ocr ? '未取得持分核對結果' : ''])]); rawSheet['!cols'] = [{ wch: 60 }, { wch: 100 }, { wch: 100 }, { wch: 65 }]; XLSX.utils.book_append_sheet(workbook, rawSheet, '原始讀取');
   const historySheet = XLSX.utils.aoa_to_sheet([['時間', '欄位', '修改前', '修改後', '原因'], ...state.history.map(change => [change.at, fieldLabels[change.field] || change.field, typeof change.before === 'object' ? JSON.stringify(change.before) : change.before, typeof change.after === 'object' ? JSON.stringify(change.after) : change.after, change.reason])]); historySheet['!cols'] = [{ wch: 28 }, { wch: 20 }, { wch: 45 }, { wch: 45 }, { wch: 25 }]; XLSX.utils.book_append_sheet(workbook, historySheet, '修正紀錄');
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array', compression: true });
 }
