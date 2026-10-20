@@ -16,7 +16,8 @@ function playwrightRuntime() {
   const deployment = process.argv[2] || 'http://127.0.0.1:4173/';
   const origin = new URL(deployment).origin;
   const directory = path.resolve(__dirname, '..');
-  const output = path.join(directory, 'test-results', 'ui-1.7');
+  const version = JSON.parse(await fs.readFile(path.join(directory, 'package.json'), 'utf8')).version.split('.').slice(0, 2).join('.');
+  const output = path.join(directory, 'test-results', `ui-${version}`);
   await fs.mkdir(output, { recursive: true });
   const browser = await chromium.launch({ headless: true, channel: 'msedge' });
   try {
@@ -32,7 +33,7 @@ function playwrightRuntime() {
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(deployment);
-    assert.equal((await page.locator('.version').textContent()).trim(), '1.7');
+    assert.equal((await page.locator('.version').textContent()).trim(), version);
     assert.equal(await page.locator('.steps li').count(), 2);
     assert.match(await page.locator('[data-step="review"]').textContent(), /核對與結果/);
     assert.equal(await page.locator('[data-screen="result"]').count(), 0);
@@ -143,9 +144,40 @@ function playwrightRuntime() {
     assert.equal(await page.locator('#confirmed').isChecked(), false);
     assert.equal(await page.locator('#field-main').inputValue(), '');
     await assertCleared();
+    await page.route(/\/src\/readers\.js\?v=[^/]+$/, route => route.fulfill({ contentType: 'text/javascript', body: `
+      export async function inspectDocument() { return { kind: 'image' }; }
+      export async function readDocument(file) {
+        const state = file.name.match(/share-(ok|conflict|unverified|mismatch)/)[1];
+        const text = ['建物標示部', '總面積60.00平方公尺', '附屬建物用途陽台 面積5.00平方公尺', '共有部分', '權利範圍100000分之' + (state === 'ok' ? '600' : '60') + ' 面積10000.00平方公尺', '其他登記事項 合成資料', '含停車位 編號地下三層01', '權利範圍100000分之300'];
+        const records = text.map((text, index) => ({ text, ocr: true, pageNumber: 1, source: '合成測試第' + (index + 1) + '行' }));
+        records[4].shareVerification = { status: state === 'ok' || state === 'mismatch' ? 'verified' : state, numerator: '600', denominator: '100000' };
+        records[7].shareVerification = { status: 'verified', numerator: '300', denominator: '100000' };
+        return { kind: 'image', records, warnings: [], meta: { method: 'SYNTHETIC UI FIXTURE - NOT REAL OCR' } };
+      }
+    ` }));
+    await page.reload();
+    for (const state of ['conflict', 'unverified', 'mismatch', 'ok']) {
+      await page.locator('#file-input').setInputFiles({ name: `synthetic-share-${state}.png`, mimeType: 'image/png', buffer: Buffer.from('SYNTHETIC UI FIXTURE - NOT REAL IMAGE') });
+      await page.locator('[data-screen="review"]').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#field-common').inputValue(), '10000.00');
+      assert.equal(await page.locator('#share-numerator').inputValue(), state === 'ok' ? '600' : '');
+      assert.equal(await page.locator('#share-denominator').inputValue(), state === 'ok' ? '100000' : '');
+      assert.equal(await page.locator('#parking-share-numerator').inputValue(), '300');
+      for (const id of ['share-confirmed', 'parking-share-confirmed', 'confirmed']) assert.equal(await page.locator(`#${id}`).isChecked(), false);
+      if (state !== 'ok') {
+        assert.match(await page.locator('#transcript-candidates').textContent(), /共有持分未通過局部交叉核對/);
+        assert.equal(await page.locator('#calculate').isDisabled(), true);
+        await page.locator('#share-numerator').fill('600'); await page.locator('#share-denominator').fill('100000');
+      }
+      await page.locator('#share-confirmed').check(); await page.locator('#parking-share-confirmed').check();
+      await page.locator('#inclusion').selectOption('included'); await page.locator('#confirmed').check(); await page.locator('#calculate').click();
+      assert.equal(await page.locator('[data-result="without"]').textContent(), '28.74 坪');
+      await page.locator('#step-import').click();
+    }
     assert.deepEqual(requests, []);
     assert.deepEqual(errors, []);
-    const report = { deployment, checkedAt: new Date().toISOString(), result: 'passed', design: 'A 經典金融・同頁核對與結果', layout, checks: ['version 1.7', 'two-step navigation', 'review and results share one page', 'result heading receives focus without leaving review', 'return to fields preserves a valid result until editing', 'unchecking confirmation clears results and summary', 'reconfirmation requires a fresh calculation', 'area and relationship edits clear results and disable sharing', 'classic white vertical result layout', 'small units preserve exact result text', 'keyboard import navigation', 'result to import invalidates confirmation', 'range selection to import', 'processing cancellation via header', 'large result fonts', 'light and dark responsive layout', 'no off-origin requests or uploads', 'no page errors'] };
+    const report = { deployment, checkedAt: new Date().toISOString(), result: 'passed', design: 'A 經典金融・同頁核對與結果', layout, checks: [`version ${version}`, 'two-step navigation', 'review and results share one page', 'result heading receives focus without leaving review', 'return to fields preserves a valid result until editing', 'unchecking confirmation clears results and summary', 'reconfirmation requires a fresh calculation', 'area and relationship edits clear results and disable sharing', 'classic white vertical result layout', 'small units preserve exact result text', 'keyboard import navigation', 'result to import invalidates confirmation', 'range selection to import', 'processing cancellation via header', 'large result fonts', 'light and dark responsive layout', 'no off-origin requests or uploads', 'no page errors'] };
+    report.checks.push('synthetic OCR conflicts and absent verification keep common share blank', 'a verification marker cannot authorize a different fraction', 'manual correction and verified independent parking remain usable');
     await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
   } finally { await browser.close(); }
