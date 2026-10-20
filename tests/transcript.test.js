@@ -5,6 +5,22 @@ import { extractTranscript } from '../src/transcript.js';
 const specimen = ['建物標示部', '層數 12層 總面積 60.00平方公尺', '層次 3層 層次面積 60.00平方公尺', '附屬建物', '附屬建物用途 陽台 面積5.00平方公尺', '共有部分', '權利範圍100000分之600 面積10,000.00平方公尺', '其他登記事項 門廊7.34平方公尺', '含停車位 編號地下三層01', '權利範圍100000分之300', '其他登記事項 建築基地權利範圍10000分之45'];
 const read = (lines = specimen) => extractTranscript(lines.map((text, index) => ({ text, source: `合成測試第${index + 1}行`, pageNumber: 1 })));
 
+test('OCR 分數沒有座標或交叉核對資料時不自動帶入，Excel 文字不受影響', () => {
+  const records = specimen.map(text => ({ text, pageNumber: 1, ocr: true }));
+  const result = extractTranscript(records);
+  assert.equal(result.available.commonShare, undefined);
+  assert.equal(result.available.parkingShare, undefined);
+  assert.equal(read().available.commonShare.numerator, '600');
+  assert.equal(read().available.parkingShare.numerator, '300');
+});
+
+test('OCR 核對標記須對應同一筆分子分母，不能套用其他持分', () => {
+  const records = specimen.map(text => ({ text, pageNumber: 1, ocr: true, shareVerification: { status: 'verified', numerator: '300', denominator: '100000' } }));
+  const result = extractTranscript(records);
+  assert.equal(result.available.commonShare, undefined);
+  assert.equal(result.available.parkingShare.numerator, '300');
+});
+
 test('isolates transcript fields and independent ownership fractions with provenance', () => {
   const result = read();
   assert.equal(result.available.main.value, '60.00');
