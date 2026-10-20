@@ -125,6 +125,10 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
       }
       if (selected) {
         updateRecord(record, reading.text.replace(/\r?\n/gu, ' '), '面積小數點局部重讀', reading.confidence);
+        if (ownershipArea && fractions(reading.text).length === 1) {
+          const verifiedShare = fractions(reading.text)[0];
+          record.shareVerification = { status: 'verified', numerator: verifiedShare[2], denominator: verifiedShare[1] };
+        }
       }
     }
     for (const [index, record] of geometric.entries()) {
@@ -133,8 +137,13 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
       if (/土地|基地|地號/u.test(compact(record.text))) continue;
       const previous = geometric[index - 1];
       const numberedParkingAbove = previous && /地下[一二三四五六七八九十\d]+層[\dA-Za-z-]+/u.test(compact(previous.text)) && record.bbox.y0 - previous.bbox.y1 < typicalHeight * 1.5;
-      if (fractions(record.text).length || (!numberedParkingAbove && !/分[之2]|權利範圍|車位|還位/u.test(compact(record.text)))) continue;
+      const originalFractions = fractions(record.text);
+      if (originalFractions.length > 1 || (!numberedParkingAbove && !/分[之2]|權利範圍|車位|還位/u.test(compact(record.text)))) continue;
+      if (originalFractions.length === 1 && record.shareVerification?.status === 'verified'
+        && record.shareVerification.numerator === originalFractions[0][2] && record.shareVerification.denominator === originalFractions[0][1]) continue;
       if (!/\d/u.test(record.text)) continue;
+      const originalShare = originalFractions[0];
+      if (originalShare) record.shareVerification = { status: 'unverified' };
       const height = record.bbox.y1 - record.bbox.y0;
       const box = { left: contentLeft, top: record.bbox.y0 - height * 2, width: contentRight - contentLeft, height: height * 3.6 };
       const inset = Math.max(contentLeft, canvas.width * 0.2);
@@ -145,16 +154,24 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
         { box: { ...box, left: canvas.width * 0.2, width: canvas.width * 0.76 }, scale: 3 / sourceScale },
         { box: { ...box, left: canvas.width * 0.2, width: canvas.width * 0.76 }, scale: 3.5 / sourceScale }
       ];
+      if (originalShare) {
+        const rowBox = { left: contentLeft, top: record.bbox.y0 - height * 0.2, width: contentRight - contentLeft, height: height * 1.4 };
+        variants.unshift({ box: rowBox, scale: 2, mode: '7', threshold: 165 }, { box: rowBox, scale: 3, mode: '7' });
+      }
       const evidence = new Map();
       let selected;
       for (const variant of variants) {
         if (attempts >= 12) break;
         announce('持分交叉核對');
-        const reading = await recognizeCrop(canvas, variant.box, variant.scale, '6', undefined, ocr, options);
+        const reading = await recognizeCrop(canvas, variant.box, variant.scale, variant.mode || '6', variant.threshold, ocr, options);
         const validLines = reading.text.split(/\r?\n/u).filter(line => fractions(line).length);
         if (validLines.length !== 1 || fractions(validLines[0]).length !== 1) continue;
         const fraction = fractions(validLines[0])[0];
         const key = `${fraction[2]}/${fraction[1]}`;
+        if (originalShare && key !== `${originalShare[2]}/${originalShare[1]}`) {
+          record.shareVerification = { status: 'conflict' };
+          break;
+        }
         const count = (evidence.get(key) || 0) + 1;
         evidence.set(key, count);
         if (count >= 2) {
@@ -163,6 +180,11 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
         }
       }
       if (!selected) continue;
+      const verifiedShare = fractions(selected.line)[0];
+      if (originalShare) {
+        record.shareVerification = { status: 'verified', numerator: verifiedShare[2], denominator: verifiedShare[1] };
+        continue;
+      }
       const nearby = geometric.slice(Math.max(0, index - 3), index + 2).map(item => item.text).join(' ');
       const parkingContext = /車位|還位|地下[一二三四五六七八九十\d]+層/u.test(compact(nearby));
       let replacement = selected.line;
@@ -181,6 +203,7 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
         if (/含停車位|停車位/u.test(compact(label.text))) replacement = `${label.text.replace(/\r?\n/gu, ' ')} ${replacement}`;
       }
       updateRecord(record, replacement, '持分相鄰表格交叉重讀', selected.confidence);
+      record.shareVerification = { status: 'verified', numerator: verifiedShare[2], denominator: verifiedShare[1] };
     }
   } finally {
     if (!options.signal?.aborted) await ocr.setParameters({ tessedit_pageseg_mode: '6' });
