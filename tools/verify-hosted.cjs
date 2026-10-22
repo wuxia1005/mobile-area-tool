@@ -215,7 +215,13 @@ async function main() {
     assert.equal(await page.locator('#calculate').isDisabled(), true);
     await assertSourceScreenshots(page);
     const candidateSources = page.locator('.field-evidence:not([hidden])');
-    assert.equal(await candidateSources.count(), 5);
+    assert.equal(await candidateSources.count(), 4);
+    const commonField = page.locator('[data-area-field="common"]');
+    assert.equal(await commonField.locator('.field-evidence').count(), 1);
+    for (const id of ['scope', 'share-numerator', 'share-denominator', 'share-confirmed', 'common-share-source']) {
+      assert.equal(await page.locator(`#${id}`).count(), 1);
+      assert.equal(await commonField.locator(`#${id}`).count(), 1);
+    }
     assert.equal(await page.locator('#transcript-candidates .candidate-source').count(), 0);
     for (const field of ['main', 'accessory', 'common']) assert.equal(await page.locator(`[data-source-field="${field}"].field-source`).isVisible(), false);
     for (const candidate of await candidateSources.all()) {
@@ -225,7 +231,8 @@ async function main() {
       assert.equal(await candidate.locator('p, pre, summary, select').count(), 0);
       assert.equal((await candidate.textContent()).trim(), '');
     }
-    checks.push('五項來源截圖直接放在各自輸入處，沒有重複候選卡或長檔名來源文字；完整來源仍可展開');
+    await page.screenshot({ path: path.join(output, 'common-integrated-phone.png'), fullPage: true });
+    checks.push('共有面積、範圍、持分與確認只有一組，整合於上方共有欄；共有面積與持分合用一個原圖預覽區，完整來源仍可展開');
     checks.push('單一謄本候選自動帶入，持分／車位關係與人工確認不自動勾選');
 
     await backToImport();
