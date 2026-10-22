@@ -1,7 +1,10 @@
+import { cleanTranscriptPixels, removeTableRulings } from './ocr-image.js?v=4';
+import { normalizeOcrLabels } from './ocr-text.js?v=1';
+
 const MAX_PIXELS = 2500000;
 
 function compact(value) {
-  return String(value || '').normalize('NFKC').replace(/\s+/gu, '');
+  return normalizeOcrLabels(String(value || '').normalize('NFKC')).replace(/\s+/gu, '');
 }
 
 function fractions(text) {
@@ -57,8 +60,18 @@ async function recognizeCrop(canvas, box, scale, mode, threshold, ocr, options) 
       const scaleY = sourceHeight > 0 ? canvas.height / sourceHeight : sourceScale;
       context.drawImage(options.sourceImage, left / scaleX, top / scaleY, width / scaleX, height / scaleY, 0, 0, crop.width, crop.height);
     } else context.drawImage(canvas, left, top, width, height, 0, 0, crop.width, crop.height);
+    const pixels = context.getImageData(0, 0, crop.width, crop.height);
+    let cleaned = cleanTranscriptPixels({ width: crop.width, height: crop.height, data: pixels.data });
+    const lineHeight = Number(box.lineHeight) * boundedScale;
+    if (Number.isFinite(lineHeight) && lineHeight > 0) {
+      cleaned = removeTableRulings(cleaned, {
+        minVerticalRun: Math.max(8, Math.round(lineHeight * 1.2)),
+        minHorizontalRun: Math.max(16, Math.round(lineHeight * 3)),
+        maxThickness: Math.max(3, Math.round(lineHeight / 6))
+      });
+    }
+    pixels.data.set(cleaned.data);
     if (threshold) {
-      const pixels = context.getImageData(0, 0, crop.width, crop.height);
       for (let offset = 0; offset < pixels.data.length; offset += 4) {
         const gray = (pixels.data[offset] + pixels.data[offset + 1] + pixels.data[offset + 2]) / 3;
         const color = gray < threshold ? 0 : 255;
@@ -66,8 +79,8 @@ async function recognizeCrop(canvas, box, scale, mode, threshold, ocr, options) 
         pixels.data[offset + 1] = color;
         pixels.data[offset + 2] = color;
       }
-      context.putImageData(pixels, 0, 0);
     }
+    context.putImageData(pixels, 0, 0);
     await ocr.setParameters({ tessedit_pageseg_mode: mode });
     const result = await ocr.recognize(crop);
     checkAbort(options);
@@ -100,7 +113,7 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
         || ownershipArea;
       if (!labeledArea || decimalAreas(record.text).length) continue;
       const height = record.bbox.y1 - record.bbox.y0;
-      const box = { left: 0, top: record.bbox.y0 - height * 0.2, width: canvas.width, height: height * 1.4 };
+      const box = { left: 0, top: record.bbox.y0 - height * 0.2, width: canvas.width, height: height * 1.4, lineHeight: height };
       announce('面積小數點');
       const binary = await recognizeCrop(canvas, box, 2, '7', 165, ocr, options);
       announce('面積原字');
@@ -113,11 +126,29 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
       let reading = enlargedAreas.includes(selected) ? enlarged : binary;
       if (!selected && attempts < 12) {
         announce('面積數值欄位');
-        const valueColumn = await recognizeCrop(canvas, { ...box, left: canvas.width * 0.53, width: canvas.width * 0.42 }, 3, '7', undefined, ocr, options);
+        const columnBox = { ...box, left: canvas.width * 0.53, width: canvas.width * 0.42 };
+        const valueColumn = await recognizeCrop(canvas, columnBox, 3, '7', undefined, ocr, options);
         readings.push(valueColumn);
         const columnAreas = decimalAreas(valueColumn.text);
         selected = columnAreas.find(value => binaryAreas.includes(value) || enlargedAreas.includes(value));
         if (selected) reading = enlargedAreas.includes(selected) ? enlarged : binary;
+        else if (!ownershipArea && columnAreas.length === 1 && attempts < 12) {
+          const columnValue = columnAreas[0];
+          const columnText = valueColumn.text.replace(/\r?\n/gu, ' ');
+          const labelStart = columnText.search(/面積/u);
+          const valueStart = columnText.indexOf(columnValue);
+          const labelled = labelStart >= 0 && valueStart > labelStart && /(?:面積|[:：])\s*[*#$%＊]*\s*$/u.test(columnText.slice(0, valueStart));
+          const consistent = [binaryAreas, enlargedAreas].every(areas => !areas.length || areas.some(value => value.endsWith(columnValue)));
+          if (labelled && consistent) {
+            announce('面積數值欄位複讀');
+            const columnAgain = await recognizeCrop(canvas, columnBox, 2.4, '7', undefined, ocr, options);
+            readings.push(columnAgain);
+            if (decimalAreas(columnAgain.text).includes(columnValue)) {
+              selected = columnValue;
+              reading = { ...valueColumn, text: `${record.text.split(/面積/u)[0]}${columnText.slice(labelStart)}`.trim() };
+            }
+          }
+        }
       }
       if (selected && ownershipArea) {
         const signature = value => fractions(value).map(fraction => `${fraction[2]}/${fraction[1]}`).join('|');
@@ -149,7 +180,7 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
       const originalShare = originalFractions[0];
       if (originalShare) record.shareVerification = { status: 'unverified' };
       const height = record.bbox.y1 - record.bbox.y0;
-      const box = { left: contentLeft, top: record.bbox.y0 - height * 2, width: contentRight - contentLeft, height: height * 3.6 };
+      const box = { left: contentLeft, top: record.bbox.y0 - height * 2, width: contentRight - contentLeft, height: height * 3.6, lineHeight: height };
       const inset = Math.max(contentLeft, canvas.width * 0.2);
       const sourceScale = Number.isFinite(Number(options.sourceScale)) && Number(options.sourceScale) > 0 ? Number(options.sourceScale) : 1.6;
       const variants = [
@@ -158,8 +189,8 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
         { box: { ...box, left: canvas.width * 0.2, width: canvas.width * 0.76 }, scale: 3 / sourceScale },
         { box: { ...box, left: canvas.width * 0.2, width: canvas.width * 0.76 }, scale: 3.5 / sourceScale }
       ];
-      if (originalShare) {
-        const rowBox = { left: contentLeft, top: record.bbox.y0 - height * 0.2, width: contentRight - contentLeft, height: height * 1.4 };
+      if (originalShare || /權利範圍/u.test(compact(record.text))) {
+        const rowBox = { left: contentLeft, top: record.bbox.y0 - height * 0.2, width: contentRight - contentLeft, height: height * 1.4, lineHeight: height };
         variants.unshift({ box: rowBox, scale: 2, mode: '7', threshold: 165 }, { box: rowBox, scale: 3, mode: '7' });
       }
       const evidence = new Map();
@@ -201,7 +232,7 @@ export async function refineTranscript(canvas, records, ocr, options = {}) {
       }
       if (parkingContext && !/含停車位|停車位權利範圍/u.test(compact(replacement))) {
         if (attempts >= 12) continue;
-        const labelBox = { left: contentLeft, top: record.bbox.y0 - height * 1.2, width: Math.max(1, canvas.width * 0.29 - contentLeft), height: height * 2 };
+        const labelBox = { left: contentLeft, top: record.bbox.y0 - height * 1.2, width: Math.max(1, canvas.width * 0.29 - contentLeft), height: height * 2, lineHeight: height };
         announce('車位表格標籤');
         const label = await recognizeCrop(canvas, labelBox, 3, '6', undefined, ocr, options);
         if (/含停車位|停車位/u.test(compact(label.text))) replacement = `${label.text.replace(/\r?\n/gu, ' ')} ${replacement}`;

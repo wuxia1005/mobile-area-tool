@@ -1,5 +1,5 @@
-import { cleanTranscriptPixels } from './ocr-image.js?v=3';
-import { refineTranscript } from './ocr-refine.js?v=1.8';
+import { cleanTranscriptPixels, removeTableRulings } from './ocr-image.js?v=4';
+import { refineTranscript } from './ocr-refine.js?v=1.9';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_CANVAS_PIXELS = 2500000;
@@ -214,7 +214,7 @@ function createCanvas(width, height) {
 function cleanedCanvas(canvas) {
   const drawing = createCanvas(canvas.width, canvas.height);
   const original = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-  const cleaned = cleanTranscriptPixels(original);
+  const cleaned = removeTableRulings(cleanTranscriptPixels(original), { maxThickness: Math.max(4, Math.round(Math.min(canvas.width, canvas.height) / 150)) });
   drawing.context.putImageData(new ImageData(cleaned.data, cleaned.width, cleaned.height), 0, 0);
   return drawing.canvas;
 }

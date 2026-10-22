@@ -1,7 +1,7 @@
 import { calculateAreas } from './core.js?v=3';
 import { extractCandidates } from './extract.js?v=3';
-import { inspectDocument, readDocument } from './readers.js?v=1.8';
-import { extractTranscript } from './transcript.js?v=1.8';
+import { inspectDocument, readDocument } from './readers.js?v=1.9';
+import { extractTranscript } from './transcript.js?v=1.9';
 import { createSourceScreenshot, createExcelScreenshots } from './source-screenshots.js?v=4';
 
 const fieldNames = ['main', 'accessory', 'common', 'parking'];
@@ -55,6 +55,7 @@ function updateCalculation() {
   const result = calculateAreas(coreInput());
   fieldNames.forEach(name => { document.querySelector(`[data-field-output="${name}"]`).textContent = name === 'common' && element('scope').value !== 'household' ? '本戶共有：' + result.display.common : result.display[name]; });
   element('share-fields').hidden = element('scope').value !== 'whole';
+  element('common-share-confirmation').hidden = element('scope').value !== 'whole';
   const parkingFromShare = element('parking-scope').value === 'common';
   element('parking-share-fields').hidden = !parkingFromShare;
   document.querySelector('[data-area-field="parking"]').hidden = parkingFromShare;
@@ -73,6 +74,8 @@ function addHistory(field, previous, next, reason) {
 }
 function renderFieldControls() {
   const container = element('fields');
+  const commonSettings = element('common-settings');
+  commonSettings.remove();
   container.replaceChildren();
   fieldNames.forEach(name => {
     const wrapper = document.createElement('div'); wrapper.className = 'field'; wrapper.dataset.areaField = name;
@@ -98,7 +101,7 @@ function renderFieldControls() {
     }
     source.value = state.fields[name].sourceId;
     source.hidden = !candidates.length || candidates.length === 1 && source.value === candidates[0].id;
-    const evidence = document.createElement('div'); evidence.className = 'field-evidence'; evidence.dataset.sourceField = name;
+    const evidence = name === 'common' ? commonSettings.querySelector('#common-share-source') : document.createElement('div'); evidence.className = 'field-evidence'; evidence.dataset.sourceField = name;
     source.addEventListener('change', () => {
       const candidate = candidates.find(candidate => candidate.id === source.value);
       const previous = { ...state.fields[name] };
@@ -106,11 +109,23 @@ function renderFieldControls() {
       if (candidate) Object.assign(state.fields[name], { value: candidate.value, unit: candidate.unit, originalValue: candidate.value, originalUnit: candidate.unit });
       addHistory(name, previous, { ...state.fields[name] }, '選取來源候選');
       input.value = state.fields[name].value; unit.value = state.fields[name].unit; if (name === 'common') revokeOwnershipConfirmation(); invalidate();
-      renderInlineSource(evidence, candidate);
+      if (name === 'common') renderCommonSource(); else renderInlineSource(evidence, candidate);
     });
-    wrapper.append(heading, values, source, evidence); container.append(wrapper);
-    renderInlineSource(evidence, candidates.find(candidate => candidate.id === source.value));
+    wrapper.append(heading, values, source, name === 'common' ? commonSettings : evidence); container.append(wrapper);
+    if (name === 'common') renderCommonSource(); else renderInlineSource(evidence, candidates.find(candidate => candidate.id === source.value));
   });
+}
+function renderCommonSource() {
+  const area = state.extraction.candidates.find(candidate => candidate.id === state.fields.common.sourceId);
+  const share = element('scope').value === 'whole' ? state.transcriptReading?.available.commonShare : null;
+  const candidates = [area, share].filter(Boolean);
+  const candidate = candidates.length ? {
+    id: candidates.map(candidate => candidate.id).join('/'),
+    field: 'common',
+    label: share ? '共有面積與持分' : '共有部分',
+    source: [...new Set(candidates.map(candidate => candidate.source))].join('／'),
+  } : null;
+  renderInlineSource(element('common-share-source'), candidate);
 }
 function resetDocument(file) {
   state.file = file; state.document = null; state.result = null; state.history = []; state.extraction = { candidates: [], suggestions: {}, warnings: [] }; state.confirmed = false;
@@ -130,7 +145,7 @@ function renderTranscript() {
   panel.hidden = !panel.textContent;
   element('transcript-panel').open = false;
   element('transcript-panel').hidden = !state.file;
-  renderInlineSource(element('common-share-source'), reading?.available.commonShare);
+  renderCommonSource();
   renderInlineSource(element('parking-share-source'), reading?.available.parkingShare);
   element('apply-transcript').disabled = !reading || !Object.keys(reading.available).length;
   element('retry-transcript').hidden = !state.file || !['pdf', 'image'].includes(state.metadata?.kind);
@@ -372,7 +387,7 @@ element('start-read').addEventListener('click', readSelectedFile);
 element('pdf-auto').addEventListener('change', () => { element('pdf-pages').disabled = element('pdf-auto').checked; });
 element('cancel-selection').addEventListener('click', () => { clearError(); showScreen('import'); });
 element('cancel-read').addEventListener('click', () => { state.generation += 1; state.controller?.abort(); state.controller = null; releaseImages(); showScreen('import'); clearError(); });
-for (const id of settingIds) element(id).addEventListener(/(?:numerator|denominator)$/.test(id) ? 'input' : 'change', () => { if (/share-(?:numerator|denominator)$/.test(id)) { const confirmedId = id.startsWith('parking-') ? 'parking-share-confirmed' : 'share-confirmed'; addHistory(confirmedId, element(confirmedId).checked, false, '持分已修改，需重新核對'); element(confirmedId).checked = false; } if (id === 'scope') revokeOwnershipConfirmation(); if (id === 'parking-scope') revokeOwnershipConfirmation(false); addHistory(id, state.settings[id], element(id).type === 'checkbox' ? element(id).checked : element(id).value, '人工修改換算設定'); invalidate(); });
+for (const id of settingIds) element(id).addEventListener(/(?:numerator|denominator)$/.test(id) ? 'input' : 'change', () => { if (/share-(?:numerator|denominator)$/.test(id)) { const confirmedId = id.startsWith('parking-') ? 'parking-share-confirmed' : 'share-confirmed'; addHistory(confirmedId, element(confirmedId).checked, false, '持分已修改，需重新核對'); element(confirmedId).checked = false; } if (id === 'scope') revokeOwnershipConfirmation(); if (id === 'parking-scope') revokeOwnershipConfirmation(false); addHistory(id, state.settings[id], element(id).type === 'checkbox' ? element(id).checked : element(id).value, '人工修改換算設定'); invalidate(); if (id === 'scope') renderCommonSource(); });
 element('apply-transcript').addEventListener('click', applyTranscript);
 element('retry-transcript').addEventListener('click', () => { element('transcript-mode').checked = true; const file = state.file; resetDocument(file); readSelectedFile(); });
 element('confirmed').addEventListener('change', () => { state.confirmed = element('confirmed').checked; if (!state.confirmed) clearResults(); updateCalculation(); });

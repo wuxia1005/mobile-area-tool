@@ -1,3 +1,5 @@
+import { normalizeOcrLabels } from './ocr-text.js?v=1';
+
 const labels = { main: '主建物', accessory: '附屬建物／陽台', common: '共有總面積', commonShare: '共有持分', parkingShare: '車位持分' };
 const areaPattern = /([\d,.]+)(平方公尺|平方米|m2(?![\dA-Za-z])|坪)/giu;
 const decimalPattern = /^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,8})?$/u;
@@ -7,7 +9,7 @@ const sectionEndPattern = /(?:建物|土地)?所有有?權部|(?:建物|土地)?
 const remarksPattern = /其他登記事項|基地權利|建築基地|土地/u;
 
 function compact(text) {
-  return text.normalize('NFKC').replace(/[−﹣]/gu, '-').replace(/(?<=\d)\s+(?=\d)/gu, '?').replace(/(?<![\dA-Za-z])([A-Za-z]{2,})\s+(?=\d)/gu, '$1|').replace(/(分之\d+)\s+(?=[^\d\s])/gu, '$1|').replace(/\s+/gu, '');
+  return normalizeOcrLabels(text.normalize('NFKC')).replace(/[−﹣]/gu, '-').replace(/(?<=\d)\s+(?=\d)/gu, '?').replace(/(?<![\dA-Za-z])([A-Za-z]{2,})\s+(?=\d)/gu, '$1|').replace(/(分之\d+)\s+(?=[^\d\s])/gu, '$1|').replace(/\s+/gu, '');
 }
 
 function areas(line) {
