@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanTranscriptPixels, horizontalTextBands } from '../src/ocr-image.js';
+import { cleanTranscriptPixels, horizontalTextBands, removeTableRulings } from '../src/ocr-image.js';
 
 function image(width, height) {
   return { width, height, data: new Uint8ClampedArray(width * height * 4).fill(255) };
@@ -76,6 +76,43 @@ test('padding stays within the image and merges overlapping crops', () => {
 
 test('empty white pages have no row strips', () => {
   assert.deepEqual(horizontalTextBands(image(50, 30)), []);
+});
+
+test('removes long thin table rulings but keeps glyph strokes, masks and the source', () => {
+  const original = image(200, 120);
+  paint(original, 50, 0, 2, 120);
+  paint(original, 0, 60, 200, 2);
+  paint(original, 100, 20, 2, 16);
+  paint(original, 120, 30, 20, 2);
+  paint(original, 150, 70, 40, 40);
+  paint(original, 20, 10, 2, 100, [230, 60, 60, 255]);
+  const before = new Uint8ClampedArray(original.data);
+  const cleaned = removeTableRulings(original);
+  assert.deepEqual(original.data, before);
+  assert.ok(cleaned.removed > 0);
+  assert.deepEqual(pixel(cleaned, 50, 30), [255, 255, 255, 255]);
+  assert.deepEqual(pixel(cleaned, 51, 100), [255, 255, 255, 255]);
+  assert.deepEqual(pixel(cleaned, 100, 60), [255, 255, 255, 255]);
+  assert.deepEqual(pixel(cleaned, 190, 61), [255, 255, 255, 255]);
+  assert.deepEqual(pixel(cleaned, 10, 60), [0, 0, 0, 255]);
+  assert.deepEqual(pixel(cleaned, 100, 28), [0, 0, 0, 255]);
+  assert.deepEqual(pixel(cleaned, 130, 30), [0, 0, 0, 255]);
+  assert.deepEqual(pixel(cleaned, 170, 90), [0, 0, 0, 255]);
+  assert.deepEqual(pixel(cleaned, 150, 90), [0, 0, 0, 255]);
+  assert.deepEqual(pixel(cleaned, 20, 50), [230, 60, 60, 255]);
+});
+
+test('ruling removal honours explicit run and thickness limits', () => {
+  const original = image(60, 60);
+  paint(original, 5, 10, 1, 20);
+  assert.equal(removeTableRulings(original).removed, 0);
+  const cleaned = removeTableRulings(original, { minVerticalRun: 20, minHorizontalRun: 40, maxThickness: 2 });
+  assert.equal(cleaned.removed, 1);
+  assert.deepEqual(pixel(cleaned, 5, 20), [255, 255, 255, 255]);
+  const thick = image(60, 60);
+  paint(thick, 5, 10, 6, 20);
+  assert.equal(removeTableRulings(thick, { minVerticalRun: 20, minHorizontalRun: 40, maxThickness: 2 }).removed, 0);
+  for (const options of [{ minVerticalRun: 0 }, { minHorizontalRun: -1 }, { maxThickness: 1.5 }]) assert.throws(() => removeTableRulings(original, options), RangeError);
 });
 
 test('rejects malformed image geometry and crop settings', () => {

@@ -207,7 +207,14 @@ async function readExportedSource(page, output, name, XLSX) {
     assert.equal(await page.locator('#calculate').isDisabled(), true);
     await assertSourceScreenshots(page);
     const candidateSources = page.locator('.field-evidence:not([hidden])');
-    assert.equal(await candidateSources.count(), 5);
+    assert.equal(await candidateSources.count(), 4);
+    const commonField = page.locator('[data-area-field="common"]');
+    assert.equal(await commonField.locator('#common-settings').count(), 1);
+    assert.equal(await commonField.locator('.field-evidence').count(), 1);
+    for (const id of ['scope', 'share-numerator', 'share-denominator', 'share-confirmed', 'common-share-source']) {
+      assert.equal(await page.locator(`#${id}`).count(), 1);
+      assert.equal(await commonField.locator(`#${id}`).count(), 1);
+    }
     for (const candidate of await candidateSources.all()) {
       await candidate.locator('img').first().waitFor({ state: 'attached' });
       assert.ok(await candidate.locator('img').count() > 0);

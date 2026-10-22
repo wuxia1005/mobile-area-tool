@@ -370,7 +370,7 @@ test('單次有效持分沒有第二次一致結果時不更新原記錄', async
     const before = structuredClone(records);
     await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
     assert.deepEqual(records, before);
-    assert.equal(harness.recognitionCalls.length, 4);
+    assert.equal(harness.recognitionCalls.length, 6);
   } finally { harness.close(); }
 });
 
@@ -384,8 +384,104 @@ test('持分需分子分母完全一致而不是只看相同分子', async () =>
     const before = structuredClone(records);
     await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
     assert.deepEqual(records, before);
-    assert.equal(harness.recognitionCalls.length, 4);
+    assert.equal(harness.recognitionCalls.length, 6);
   } finally { harness.close(); }
+});
+
+test('整列重讀把填充星號黏成數字時，數值欄兩次一致且為其尾碼才採用並保留原標籤', async () => {
+  const harness = canvasHarness(['附屬建物用途 陽台 面積5848.38平方公尺', '附屬建物用途 陽台 面積888398.38平方公尺', '面積 : 8.38平方公尺', '面積 : 8.38平方公尺']);
+  try {
+    const original = 'Rl 附屬建物用途 : 陽台 圖 _ 面積 : *wwwww8.38平方公盡';
+    const records = [{ text: '建物標示部' }, row('層數 005層 總面積 73.01平方公尺'), row('附屬建物', 140), row(original, 180)];
+    await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+    assert.equal(harness.recognitionCalls.length, 4);
+    assert.equal(records[3].text, 'Rl 附屬建物用途 : 陽台 圖 _ 面積 : 8.38平方公尺');
+    assert.equal(records[3].originalText, original);
+    assert.equal(extractTranscript(records).available.accessory.value, '8.38');
+  } finally { harness.close(); }
+});
+
+test('數值欄重讀不一致、缺標籤或與整列讀取不是尾碼關係時不採用', async () => {
+  const cases = [
+    ['面積 : 8.38平方公尺', '面積 : 8.36平方公尺', 4],
+    ['8.38平方公尺', '8.38平方公尺', 3],
+    ['面積 : 8.38平方公尺', '面積 : 8.38平方公尺', 3, '附屬建物用途 陽台 面積7.65平方公尺'],
+  ];
+  for (const [first, second, calls, rowReading = '附屬建物用途 陽台 面積5848.38平方公尺'] of cases) {
+    const harness = canvasHarness([rowReading, '附屬建物用途 陽台 面積888398.38平方公尺', first, second]);
+    try {
+      const records = [row('附屬建物用途 陽台 面積 *wwwww8.38平方公尺')];
+      const before = structuredClone(records);
+      await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+      assert.deepEqual(records, before);
+      assert.equal(harness.recognitionCalls.length, calls);
+    } finally { harness.close(); }
+  }
+});
+
+test('權利範圍列即使初讀沒有可解析的分數也先以單列模式重讀', async () => {
+  const harness = canvasHarness(['權利範圍: *****10000分之151*******', '權利範圍: *****10000分之151*******']);
+  try {
+    const records = [{ text: '建物標示部' }, { text: '共有部分:測試段01331-000建號**3,828.26平方公尺' }, row('徊利範圍: wsss10000分之1')];
+    await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+    assert.equal(harness.recognitionCalls.length, 2);
+    assert.equal(harness.modes[0], '7');
+    assert.equal(harness.modes[1], '7');
+    assert.equal(records[2].originalText, '徊利範圍: wsss10000分之1');
+    assert.deepEqual(records[2].shareVerification, { status: 'verified', numerator: '151', denominator: '10000' });
+    const reading = extractTranscript(records);
+    assert.equal(reading.available.commonShare.numerator, '151');
+    assert.equal(reading.available.commonShare.denominator, '10000');
+  } finally { harness.close(); }
+});
+
+test('字母黏在分母前的不完整初讀不會被當成合法持分', async () => {
+  const harness = canvasHarness(['權利範圍10000分之151', '權利範圍10000分之1']);
+  try {
+    const records = [{ text: '建物標示部' }, { text: '共有部分' }, row('徊利範圍: wsss10000分之1')];
+    await refineTranscript({ width: 800, height: 1000 }, records, harness.ocr, { transcript: true });
+    assert.equal(extractTranscript(records).available.commonShare, undefined);
+  } finally { harness.close(); }
+});
+
+test('局部重讀的裁切圖會先去除貫穿的細表格線並保留短筆畫', async () => {
+  const previousDocument = globalThis.document;
+  const written = [];
+  globalThis.document = {
+    createElement() {
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          fillRect() {},
+          drawImage() {},
+          getImageData() {
+            const data = new Uint8ClampedArray(canvas.width * canvas.height * 4).fill(255);
+            const paint = (left, top, width, height) => {
+              for (let y = top; y < top + height; y += 1) for (let x = left; x < left + width; x += 1) data.set([0, 0, 0, 255], (y * canvas.width + x) * 4);
+            };
+            paint(10, 0, 2, canvas.height);
+            paint(30, 4, 2, 12);
+            return { data };
+          },
+          putImageData(pixels) { written.push({ width: canvas.width, height: canvas.height, data: Uint8ClampedArray.from(pixels.data) }); }
+        })
+      };
+      return canvas;
+    }
+  };
+  const ocr = { async setParameters() {}, async recognize() { return { data: { text: '權利範圍10000分之150', confidence: 80 } }; } };
+  try {
+    const records = [row('權利範圍10000分之150 面積1000.00平方公尺')];
+    await refineTranscript({ width: 800, height: 1000 }, records, ocr, { transcript: true });
+    assert.equal(records[0].shareVerification.status, 'verified');
+    assert.ok(written.length >= 2);
+    for (const crop of written) {
+      const pixel = (x, y) => crop.data[(y * crop.width + x) * 4];
+      assert.equal(pixel(10, Math.floor(crop.height / 2)), 255);
+      assert.equal(pixel(30, 8), 0);
+    }
+  } finally { globalThis.document = previousDocument; }
 });
 
 test('先前持分分母誤讀可由其後兩次完全一致的結果取代', async () => {

@@ -41,6 +41,19 @@ function playwrightRuntime() {
     await page.screenshot({ path: path.join(output, 'import-phone.png'), fullPage: true });
     await page.locator('#manual').click();
     assert.equal(await page.locator('#result-panel').isVisible(), false);
+    const commonField = page.locator('[data-area-field="common"]');
+    for (const id of ['scope', 'share-numerator', 'share-denominator', 'share-confirmed', 'common-share-source']) {
+      assert.equal(await page.locator(`#${id}`).count(), 1);
+      assert.equal(await commonField.locator(`#${id}`).count(), 1);
+    }
+    assert.equal(await page.locator('#fields + #common-settings').count(), 0);
+    await page.locator('#scope').selectOption('whole');
+    await page.locator('#share-numerator').fill('600'); await page.locator('#share-denominator').fill('100000');
+    await page.locator('#share-confirmed').check();
+    await page.locator('#scope').selectOption('household');
+    assert.equal(await page.locator('#share-fields').isVisible(), false);
+    assert.equal(await page.locator('#share-confirmed').isVisible(), false);
+    assert.equal(await page.locator('#share-confirmed').isChecked(), false);
     await page.locator('#step-import').focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('[data-screen="import"]').isVisible(), true);
@@ -159,6 +172,10 @@ function playwrightRuntime() {
     for (const state of ['conflict', 'unverified', 'mismatch', 'ok']) {
       await page.locator('#file-input').setInputFiles({ name: `synthetic-share-${state}.png`, mimeType: 'image/png', buffer: Buffer.from('SYNTHETIC UI FIXTURE - NOT REAL IMAGE') });
       await page.locator('[data-screen="review"]').waitFor({ state: 'visible' });
+      for (const id of ['scope', 'share-numerator', 'share-denominator', 'share-confirmed', 'common-share-source']) {
+        assert.equal(await page.locator(`#${id}`).count(), 1);
+        assert.equal(await page.locator(`[data-area-field="common"] #${id}`).count(), 1);
+      }
       assert.equal(await page.locator('#field-common').inputValue(), '10000.00');
       assert.equal(await page.locator('#share-numerator').inputValue(), state === 'ok' ? '600' : '');
       assert.equal(await page.locator('#share-denominator').inputValue(), state === 'ok' ? '100000' : '');
@@ -178,6 +195,7 @@ function playwrightRuntime() {
     assert.deepEqual(errors, []);
     const report = { deployment, checkedAt: new Date().toISOString(), result: 'passed', design: 'A 經典金融・同頁核對與結果', layout, checks: [`version ${version}`, 'two-step navigation', 'review and results share one page', 'result heading receives focus without leaving review', 'return to fields preserves a valid result until editing', 'unchecking confirmation clears results and summary', 'reconfirmation requires a fresh calculation', 'area and relationship edits clear results and disable sharing', 'classic white vertical result layout', 'small units preserve exact result text', 'keyboard import navigation', 'result to import invalidates confirmation', 'range selection to import', 'processing cancellation via header', 'large result fonts', 'light and dark responsive layout', 'no off-origin requests or uploads', 'no page errors'] };
     report.checks.push('synthetic OCR conflicts and absent verification keep common share blank', 'a verification marker cannot authorize a different fraction', 'manual correction and verified independent parking remain usable');
+    report.checks.push('one integrated common area and ownership group survives file changes', 'household scope hides ownership inputs and revokes confirmation');
     await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
   } finally { await browser.close(); }
